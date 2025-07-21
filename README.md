@@ -27,7 +27,7 @@ Project scope:
 
 ## Usage
 
-Browser authentication and saving to file:  
+Periodically log on to authenticate browser and save cookies to file:  
 ```playwright codegen --browser chromium --save-storage=./playwright/.auth/auth_1.json https://www.linkedin.com```
 
 

@@ -7,13 +7,14 @@ from utilities import setup_logging, get_logger
 setup_logging()
 logger = get_logger(__name__)
 
-scrollable_pane_selector = "ul.semantic-search-results-list"
-job_cards_selector = "li.semantic-search-results-list__list-item"
-title_selector = "div.artdeco-entity-lockup__title strong"
-company_selector = "div.artdeco-entity-lockup__subtitle > div"
-location_selector = "div.artdeco-entity-lockup__caption > div"
-url_selector = "a.job-card-job-posting-card-wrapper__card-link"
-salary_selector = "div.artdeco-entity-lockup__metadata > div.mt1"
+scrollable_pane_selector = 'ul.semantic-search-results-list'
+job_cards_selector = 'li.semantic-search-results-list__list-item'
+title_selector = 'div.artdeco-entity-lockup__title strong'
+company_selector = 'div.artdeco-entity-lockup__subtitle > div'
+location_selector = 'div.artdeco-entity-lockup__caption > div'
+url_selector = 'a.job-card-job-posting-card-wrapper__card-link'
+salary_selector = 'div.artdeco-entity-lockup__metadata > div.mt1'
+next_button_selector = 'button[aria-label="View next page"]'
 
 def generate_search_url(keywords: str, geo_id: str = "105080838", distance: str = "25") -> str:
     """
@@ -123,14 +124,12 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
             logger.info("Attempting to navigate to the next page...")
             try:
                 # This is a very specific and reliable selector for the "Next" button
-                next_button_selector = 'button[aria-label="View next page"]'
                 await page.locator(next_button_selector).click(timeout=5000)
-                # Wait for the next page to load
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
                 logger.info("Successfully clicked 'Next' page.")
             except Exception as e:
                 logger.info(f"Could not find or click the 'Next' page button. Assuming end of results. Error: {e}")
-                break # Exit the loop if there's no next page
+                break
 
         await browser.close()
         return all_job_listings
