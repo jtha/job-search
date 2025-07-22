@@ -1,8 +1,11 @@
+import uuid
 import urllib.parse
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
+from markdownify import markdownify as md
+import time
 
-from utilities import setup_logging, get_logger
+from .utilities import setup_logging, get_logger
 
 setup_logging()
 logger = get_logger(__name__)
@@ -24,13 +27,14 @@ def generate_search_url(keywords: str, geo_id: str = "105080838", distance: str 
     keywords_stringifed = urllib.parse.quote(keywords)
     return f"{url_base}?distance={distance}&geoId={geo_id}&keywords={keywords_stringifed}"
 
-async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
+async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> dict:
     """
     Scrapes multiple pages of LinkedIn job listings, up to a specified maximum.
     """
     logger.info("Initializing browser and navigating to LinkedIn Jobs...")
+    job_run_id = str(uuid.uuid4())
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             storage_state="../playwright/.auth/auth_1.json"
         ) 
@@ -39,11 +43,13 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
         search_url = generate_search_url(keywords)
         await page.goto(search_url, wait_until="load", timeout=10000)
 
-        
+        all_job_meta = []
         all_job_listings = []
+        counter = 0
 
         for page_num in range(1, max_pages + 1):
             logger.info(f"Scraping Page {page_num} ---")
+            timestamp = int(time.time())
             
             try:
                 await page.wait_for_selector(scrollable_pane_selector, timeout=10000)
@@ -83,6 +89,8 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
                 if not card.select_one('div.job-card-job-posting-card-wrapper'):
                     continue
                 job_data = {}
+                job_meta = {}
+                counter += 1
                 def get_text(selector):
                     element = card.select_one(selector)
                     return element.get_text(strip=True) if element else None
@@ -98,6 +106,7 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
                 job_data['salary'] = salary_element.get_text(strip=True) if salary_element and '$' in salary_element.get_text() else None
                 
                 job_id = None
+                job_url_direct = None
 
                 if job_data['url']:
                     try:
@@ -105,14 +114,26 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
                         query_params = urllib.parse.parse_qs(parsed_url.query)
                         if 'currentJobId' in query_params:
                             job_id = query_params['currentJobId'][0]
+                            job_url_direct = f"https://www.linkedin.com/jobs/view/{job_id}"
                     except Exception as e:
                         logger.exception(f"Could not parse job ID from URL: {job_data['url']}. Error: {e}")
                 
                 job_data['job_id'] = job_id
+                job_data['job_url_direct'] = job_url_direct
+
+                job_meta['job_run_id'] = job_run_id
+                job_meta['job_run_timestamp'] = timestamp
+                job_meta['job_run_keywords'] = keywords
+                job_meta['job_run_page_num'] = page_num
+                job_meta['job_run_rank'] = counter
+                job_meta['job_id'] = job_id
+
+
 
                 if job_data['title']:
                     all_job_listings.append(job_data)
                     page_jobs_count += 1
+                    all_job_meta.append(job_meta)
             
             logger.info(f"Found {page_jobs_count} jobs on this page.")
 
@@ -132,4 +153,67 @@ async def scrape_linkedin_multi_page(keywords: str, max_pages: int =10) -> list:
                 break
 
         await browser.close()
-        return all_job_listings
+        return {
+            "job_run_meta": all_job_meta,
+            "job_listings": all_job_listings
+        }
+
+async def scrape_linkedin_job_page(url: str, min_length:int=200) -> str | None:
+    """
+    Scrapes a single LinkedIn job page for detailed information,
+    returning the description in Markdown format.
+    """
+    logger.info("Launching browser...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True) 
+        
+        try:
+            context = await browser.new_context(
+                storage_state="../playwright/.auth/auth_1.json"
+            )
+        except FileNotFoundError:
+            logger.exception("Error: Authentication file not found. Please run the playwright script to log in and create 'auth_1.json' first.")
+            await browser.close()
+            return "Error: Auth file not found."
+
+        page = await context.new_page()
+        
+        logger.info(f"Navigating to {url}...")
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+        # Wait for the main description container to be visible
+        description_locator = page.locator("div.jobs-description__content")
+        await description_locator.wait_for(state="visible", timeout=10000)
+
+        # Click the "see more" button if it exists to expand the description
+        try:
+            see_more_button = page.get_by_role("button", name="Click to see more description")
+            if await see_more_button.is_visible():
+                print("Clicking 'see more' to expand description...")
+                await see_more_button.click()
+                # Give it a moment to expand
+                await page.wait_for_timeout(500) 
+        except Exception as e:
+            # This is not a critical error; the button may not be present on shorter descriptions
+            logger.info("Could not find or click 'see more' button (might not be necessary).")
+
+        logger.info("Extracting job description HTML...")
+        job_desc_html = await description_locator.inner_html()
+
+        # The `heading_style="ATX"` option ensures that <h1> becomes #, <h2> becomes ##, etc.
+        soup = BeautifulSoup(job_desc_html, "lxml")
+        plain_text = soup.get_text()
+        text_length = len(plain_text)
+
+        if text_length < min_length:
+            await browser.close()
+            logger.error(f"Job description is too short ({text_length} characters). Skipping this job.")
+            return None
+
+        logger.info("Converting HTML to Markdown...")
+        job_description_md = md(job_desc_html, heading_style="ATX").strip()
+        
+        await browser.close()
+        logger.info("Scraping complete.")
+
+    return job_description_md

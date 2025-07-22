@@ -211,3 +211,5 @@ notebooks/
 *.ipynb
 playwright/.auth/
 # Ignore all files in the chrome_user_data directory
+
+*/logs/
