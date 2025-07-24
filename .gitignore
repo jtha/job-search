@@ -217,3 +217,5 @@ playwright/.auth/
 
 backend/job_tracker.db
 *.db
+*.db-shm
+*.db-wal

@@ -1,67 +1,65 @@
 import os
-from pathlib import Path
-from typing import Optional, Type, Literal
 import uuid
 import time
 import json
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from openai import AsyncOpenAI, NotGiven
+from google import genai
+from google.genai import types
+from google.genai.types import Schema, Type
 
 from .utilities import setup_logging, get_logger
 from .db import (
     get_document_prompt_generate_job_assessment,
-    get_document_master_resume
+    get_document_master_resume,
+    upsert_job_quarantine
 )
 
 load_dotenv()
 setup_logging()
 logger = get_logger(__name__)
 
-client = AsyncOpenAI(
-    api_key = os.getenv("OPENAI_API_KEY"),
-    base_url = os.getenv("OPENAI_BASE_URL")
+client = genai.Client( api_key=os.getenv("GEMINI_API_KEY") )
+
+job_assessment_schema = Schema(
+    type=Type.OBJECT,
+    properties={
+        # 'job_assessment_rating': Schema(type=Type.STRING),
+        # 'job_assessment_details': Schema(type=Type.STRING),
+        'job_assessment_required_qualifications_matched_count': Schema(type=Type.INTEGER),
+        'job_assessment_required_qualifications_count': Schema(type=Type.INTEGER),
+        'job_assessment_additional_qualifications_matched_count': Schema(type=Type.INTEGER),
+        'job_assessment_additional_qualifications_count': Schema(type=Type.INTEGER),
+        'job_assessment_list_required_qualifications': Schema(
+            type=Type.ARRAY,
+            items=Schema(type=Type.STRING)
+        ),
+        'job_assessment_list_matched_required_qualifications': Schema(
+            type=Type.ARRAY,
+            items=Schema(type=Type.STRING)
+        ),
+        'job_assessment_list_additional_qualifications': Schema(
+            type=Type.ARRAY,
+            items=Schema(type=Type.STRING)
+        ),
+        'job_assessment_list_matched_additional_qualifications': Schema(
+            type=Type.ARRAY,
+            items=Schema(type=Type.STRING)
+        ),
+    },
+    property_ordering=[
+        'job_assessment_list_required_qualifications',
+        'job_assessment_list_additional_qualifications',
+        'job_assessment_list_matched_required_qualifications',
+        'job_assessment_list_matched_additional_qualifications',
+        'job_assessment_required_qualifications_count',
+        'job_assessment_required_qualifications_matched_count',
+        'job_assessment_additional_qualifications_count',
+        'job_assessment_additional_qualifications_matched_count',
+        # 'job_assessment_details',
+        # 'job_assessment_rating',
+    ]
 )
-
-class JobPosting(BaseModel):
-    job_assessment_rating: str
-    job_assessment_details: str
-    job_assessment_required_qualifications_matched_count: int
-    job_assessment_required_qualifications_count: int
-    job_assessment_additional_qualifications_matched_count: int
-    job_assessment_additional_qualifications_count: int
-    job_assessment_list_required_qualifications: list[str]
-    job_assessment_list_matched_required_qualifications: list[str]
-    job_assessment_list_additional_qualifications: list[str]
-    job_assessment_list_matched_additional_qualifications: list[str]
-
-def md_to_string(md_path: str) -> str:
-    return Path(md_path).read_text(encoding="utf-8")
-
-async def generate_text(
-    system_prompt: str,
-    user_prompt: str,
-    model: str,
-    temperature: float,
-    response_model: Optional[Type[BaseModel]] = None,
-    reasoning_effort: Literal["low", "medium", "high"] = "medium"
-):
-    try:
-        completion = await client.chat.completions.parse(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format=response_model if response_model else NotGiven,
-            temperature=temperature,
-            reasoning_effort=reasoning_effort
-        )
-        return completion
-    except Exception as e:
-        logger.exception("Error generating text: %s", e)
-        return None
     
 async def generate_job_assessment(job_id:str, job_description: str, model: str = "gemini-2.5-flash"):
     """ Generates a job assessment based on the provided job description and model.
@@ -85,35 +83,38 @@ async def generate_job_assessment(job_id:str, job_description: str, model: str =
     logger.info("Generating job assessment...")
     llm_run_id = str(uuid.uuid4())
     try:
-        result = await generate_text(
-            system_prompt=system_prompt["document_markdown"],
-            user_prompt=user_prompt,
-            model=model,
-            temperature=0.3,
-            response_model=JobPosting,
-            reasoning_effort="medium"
+        result = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                # max_output_tokens=10000,
+                system_instruction=system_prompt["document_markdown"],
+                response_mime_type="application/json",
+                response_schema=job_assessment_schema
+            )
         )
 
         # To do: Handle 429 and other errors
 
         if result is not None:
             logger.info("Job assessment generated successfully.")
-            job_assessment_payload = result.choices[0].message.parsed.model_dump()  # type: ignore
-            logger.info(f"prompt:{result.usage.prompt_tokens}, completion:{result.usage.completion_tokens}, thinking:{result.usage.total_tokens-result.usage.prompt_tokens-result.usage.completion_tokens} total:{result.usage.total_tokens}") # type: ignore
+            job_assessment_payload = result.parsed
+            logger.info(f"prompt:{result.usage_metadata.prompt_token_count}, completion:{result.usage_metadata.candidates_token_count}, thinking:{result.usage_metadata.thoughts_token_count} total:{result.usage_metadata.total_token_count}") # type: ignore
             job_assessment_id = str(uuid.uuid4())
 
             # Convert list fields to JSON strings to store in the database
-            job_assessment_payload["job_assessment_list_required_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_required_qualifications"])
-            job_assessment_payload["job_assessment_list_matched_required_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_matched_required_qualifications"])
-            job_assessment_payload["job_assessment_list_additional_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_additional_qualifications"])
-            job_assessment_payload["job_assessment_list_matched_additional_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_matched_additional_qualifications"])
+            job_assessment_payload["job_assessment_list_required_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_required_qualifications"]) # type: ignore
+            job_assessment_payload["job_assessment_list_matched_required_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_matched_required_qualifications"]) # type: ignore
+            job_assessment_payload["job_assessment_list_additional_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_additional_qualifications"]) # type: ignore
+            job_assessment_payload["job_assessment_list_matched_additional_qualifications"] = json.dumps(job_assessment_payload["job_assessment_list_matched_additional_qualifications"]) # type: ignore
 
             # Add additional fields required for the job_assessment table to the job assessment payload
-            job_assessment_payload["job_assessment_id"] = job_assessment_id
-            job_assessment_payload["job_id"] = job_id
-            job_assessment_payload['job_assessment_timestamp'] = int(time.time())
-            job_assessment_payload['job_assessment_resume_document_id'] = resume["document_id"]
-            job_assessment_payload['job_assessment_prompt_document_id'] = system_prompt["document_id"]
+            job_assessment_payload["job_assessment_id"] = job_assessment_id # type: ignore
+            job_assessment_payload["job_id"] = job_id # type: ignore
+            job_assessment_payload['job_assessment_timestamp'] = int(time.time()) # type: ignore
+            job_assessment_payload['job_assessment_resume_document_id'] = resume["document_id"] # type: ignore
+            job_assessment_payload['job_assessment_prompt_document_id'] = system_prompt["document_id"] # type: ignore
 
             llm_runs_payload = {
                 'llm_run_id': llm_run_id,
@@ -121,14 +122,23 @@ async def generate_job_assessment(job_id:str, job_description: str, model: str =
                 'llm_model_id': model,
                 'job_id': job_id,
                 'llm_prompt_document_id': system_prompt["document_id"],
-                'llm_run_prompt_tokens': result.usage.prompt_tokens,  # type: ignore
-                'llm_run_completion_tokens': result.usage.completion_tokens,  # type: ignore
-                'llm_run_thinking_tokens': result.usage.total_tokens - result.usage.prompt_tokens - result.usage.completion_tokens,  # type: ignore
-                'llm_run_total_tokens': result.usage.total_tokens,  # type: ignore
+                'llm_run_prompt_tokens': result.usage_metadata.prompt_token_count, # type: ignore
+                'llm_run_completion_tokens': result.usage_metadata.candidates_token_count, # type: ignore
+                'llm_run_thinking_tokens': result.usage_metadata.thoughts_token_count, # type: ignore
+                'llm_run_total_tokens': result.usage_metadata.total_token_count, # type: ignore
                 'assessment_id_link': job_assessment_id
             }
 
             return {'job_assessment': job_assessment_payload, 'llm_run': llm_runs_payload}
     except Exception as e:
         logger.exception("Error generating job assessment: %s", e)
+        quarantine_id = str(uuid.uuid4())
+        await upsert_job_quarantine(
+            job_quarantine_id=quarantine_id,
+            job_id=job_id,
+            job_quarantine_reason="fail_generate_job_assessment"
+                        )
         return None
+    
+
+

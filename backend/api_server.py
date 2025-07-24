@@ -1,10 +1,12 @@
+import asyncio
 from contextlib import asynccontextmanager
+import uuid
 
 from fastapi import FastAPI, Body, HTTPException, Query
 from pydantic import BaseModel
 
 from .db import (
-    initialize_database,
+    Database,
     upsert_job_run,
     upsert_job_detail,
     upsert_document,
@@ -12,6 +14,7 @@ from .db import (
     upsert_job_assessment,
     upsert_llm_model,
     upsert_llm_run,
+    upsert_job_quarantine,
     get_job_runs,
     get_job_details,
     get_document_store,
@@ -20,7 +23,7 @@ from .db import (
     get_llm_models,
     get_llm_runs,
     get_job_ids_without_description,
-    get_job_ids_without_assessment
+    get_job_ids_without_assessment,
 )
 from .crawler import scrape_linkedin_multi_page
 from .utilities import setup_logging, get_logger
@@ -29,7 +32,7 @@ from .llm import generate_job_assessment
 # Pydantic Models
 
 class LinkedInScrapeRequest(BaseModel):
-    keywords: str
+    keywords: list[str]  # Changed to accept a list of keywords
     max_pages: int = 10
 
 # --- Pydantic Models for Upserts ---
@@ -110,9 +113,11 @@ async def lifespan(app: FastAPI):
     Application lifespan context manager to initialize the database.
     """
     logger.info("Starting application lifespan...")
-    await initialize_database()
-    logger.info("Database initialized successfully.")
+    db_instance = await Database.get_instance()
+
     yield
+    logger.info("Closing database connection...")
+    await db_instance.close()
     logger.info("Application shutdown complete.")
 
 app = FastAPI(
@@ -174,58 +179,74 @@ async def get_job_ids_without_assessment_endpoint():
 @app.post("/scrape_linkedin_multi_page")
 async def scrape_linkedin_multi_page_endpoint(payload: LinkedInScrapeRequest = Body(...)):
     """
-    Runs the LinkedIn multi-page scraper and upserts results into the database.
+    Runs the LinkedIn multi-page scraper for each keyword in the list and upserts results into the database.
     """
     try:
-        logger.info(f"Starting LinkedIn scrape for keywords: '{payload.keywords}'")
-        results = await scrape_linkedin_multi_page(payload.keywords, payload.max_pages)
-        job_run_meta = results.get("job_run_meta", [])
-        job_listings = results.get("job_listings", [])
+        all_results = []
+        for keyword in payload.keywords:
+            logger.info(f"Starting LinkedIn scrape for keyword: '{keyword}'")
+            results = await scrape_linkedin_multi_page(keyword, payload.max_pages)
+            job_run_meta = results.get("job_run_meta", [])
+            job_listings = results.get("job_listings", [])
 
-        if not job_run_meta or not job_listings:
-            logger.info("No jobs found, no data to upsert.")
-            return {"status": "success", "job_run_id": None, "jobs_found": 0, "message": "No jobs found."}
+            if not job_run_meta or not job_listings:
+                logger.info(f"No jobs found for keyword '{keyword}', no data to upsert.")
+                all_results.append({
+                    "keyword": keyword,
+                    "status": "success",
+                    "job_run_id": None,
+                    "jobs_found": 0,
+                    "message": "No jobs found."
+                })
+                continue
 
-        run_id = job_run_meta[0]["job_run_id"]
-        logger.info(f"Scrape complete. Found {len(job_listings)} jobs for run_id: {run_id}.")
+            run_id = job_run_meta[0]["job_run_id"]
+            logger.info(f"Scrape complete. Found {len(job_listings)} jobs for run_id: {run_id}.")
 
-        # 1. Upsert job_details. These are the individual job listings.
-        logger.info(f"Upserting {len(job_listings)} job details.")
-        for job in job_listings:
-            await upsert_job_detail(
-                job_id=job.get("job_id"),
-                job_title=job.get("title"),
-                job_company=job.get("company"),
-                job_location=job.get("location"),
-                job_salary=job.get("salary"),
-                job_url=job.get("url"),
-                job_url_direct=job.get("job_url_direct"),
-                job_description=None,  # Description is fetched later
-                job_applied=0,
-                job_applied_timestamp=None
+            # 1. Upsert job_details. These are the individual job listings.
+            logger.info(f"Upserting {len(job_listings)} job details for keyword '{keyword}'.")
+            for job in job_listings:
+                await upsert_job_detail(
+                    job_id=job.get("job_id"),
+                    job_title=job.get("title"),
+                    job_company=job.get("company"),
+                    job_location=job.get("location"),
+                    job_salary=job.get("salary"),
+                    job_url=job.get("url"),
+                    job_url_direct=job.get("job_url_direct"),
+                    job_description=None,  # Description is fetched later
+                    job_applied=0,
+                    job_applied_timestamp=None
+                )
+
+            # 2. Upsert job_run. This is the parent record for this entire run.
+            logger.info(f"Upserting job run for run_id: {run_id}")
+            first_meta = job_run_meta[0]
+            await upsert_job_run(
+                job_run_id=first_meta["job_run_id"],
+                job_run_timestamp=first_meta["job_run_timestamp"],
+                job_run_keywords=first_meta.get("job_run_keywords")
             )
 
-        # 2. Upsert job_run. This is the parent record for this entire run.
-        logger.info(f"Upserting job run for run_id: {run_id}")
-        first_meta = job_run_meta[0]
-        await upsert_job_run(
-            job_run_id=first_meta["job_run_id"],
-            job_run_timestamp=first_meta["job_run_timestamp"],
-            job_run_keywords=first_meta.get("job_run_keywords")
-        )
+            # 3. Upsert run_findings, which links job_runs and job_details.
+            logger.info(f"Upserting {len(job_run_meta)} run findings for keyword '{keyword}'.")
+            for meta in job_run_meta:
+                await upsert_run_finding(
+                    job_run_id=meta["job_run_id"],
+                    job_id=meta["job_id"],
+                    job_run_page_num=meta.get("job_run_page_num"),
+                    job_run_rank=meta.get("job_run_rank")
+                )
 
-        # 3. Upsert run_findings, which links job_runs and job_details.
-        logger.info(f"Upserting {len(job_run_meta)} run findings.")
-        for meta in job_run_meta:
-            await upsert_run_finding(
-                job_run_id=meta["job_run_id"],
-                job_id=meta["job_id"],
-                job_run_page_num=meta.get("job_run_page_num"),
-                job_run_rank=meta.get("job_run_rank")
-            )
+            logger.info(f"All data for keyword '{keyword}' has been successfully upserted.")
+            all_results.append({
+                "keyword": keyword,
+                "status": "success",
+                "job_run_id": run_id,
+                "jobs_found": len(job_listings)
+            })
 
-        logger.info("All data has been successfully upserted.")
-        return {"status": "success", "job_run_id": run_id, "jobs_found": len(job_listings)}
+        return {"results": all_results}
 
     except Exception as e:
         logger.error(f"Failed to scrape and upsert: {e}", exc_info=True)
@@ -270,67 +291,84 @@ async def fill_missing_job_descriptions(min_length: int = 200):
 
 # --- Endpoint to generate job assessments ---
 @app.post("/generate_job_assessments")
-async def generate_job_assessments_endpoint(jobs_to_run: int = Query(..., gt=0, description="Number of job assessments to generate")):
+async def generate_job_assessments_endpoint(
+    jobs_to_run: int = Query(..., gt=0, description="Number of job assessments to generate"),
+    concurrency: int = Query(3, gt=0, description="Number of concurrent requests to run.")
+):
     """
     Generates job assessments for jobs missing assessments, upserts results to job_assessment and llm_runs tables.
     """
+    async def process_job(job: dict, semaphore: asyncio.Semaphore):
+        job_id = job.get("job_id")
+        job_description = job.get("job_description")
+        if not job_id or not job_description:
+            logger.warning(f"Skipping job due to missing id or description: {job_id}")
+            return {"status": "failed", "job_id": job_id}
+
+        async with semaphore:
+            logger.info(f"Processing job_id: {job_id}")
+            try:
+                result = await generate_job_assessment(job_id, job_description)
+                if result and result.get("job_assessment") and result.get("llm_run"):
+                    # Upsert job_assessment
+                    try:
+                        await upsert_job_assessment(**result["job_assessment"])
+                    except Exception as e:
+                        logger.error(f"Failed to upsert job_assessment for job_id {job_id}: {e}", exc_info=True)
+                        quarantine_id = str(uuid.uuid4())
+                        await upsert_job_quarantine(
+                            job_quarantine_id=quarantine_id,
+                            job_id=job_id,
+                            job_quarantine_reason="fail_upsert_job_assessment"
+                        )
+                        return {"status": "failed", "job_id": job_id}
+                    # Upsert llm_run
+                    try:
+                        await upsert_llm_run(**result["llm_run"])
+                    except Exception as e:
+                        logger.error(f"Failed to upsert llm_run for job_id {job_id}: {e}", exc_info=True)
+                        quarantine_id = str(uuid.uuid4())
+                        await upsert_job_quarantine(
+                            job_quarantine_id=quarantine_id,
+                            job_id=job_id,
+                            job_quarantine_reason="fail_upsert_llm_run"
+                        )
+                        return {"status": "failed", "job_id": job_id}
+                    logger.info(f"Successfully processed and upserted assessment for job_id: {job_id}")
+                    return {"status": "success", "job_id": job_id}
+                else:
+                    logger.warning(f"Failed to generate assessment for job_id: {job_id}. Result was empty.")
+                    return {"status": "failed", "job_id": job_id}
+            except Exception as e:
+                logger.error(f"An exception occurred while processing job_id {job_id}: {e}", exc_info=True)
+                return {"status": "failed", "job_id": job_id}
+
     try:
-        jobs = await get_job_ids_without_assessment()
-        if not jobs:
+        jobs_to_process = await get_job_ids_without_assessment()
+        if not jobs_to_process:
             return {"status": "success", "message": "No jobs found without assessment.", "jobs_processed": 0}
-        jobs = jobs[:jobs_to_run]
-        processed = 0
-        failed = []
-        for job in jobs:
-            job_id = job.get("job_id")
-            job_description = job.get("job_description")
-            if not job_id or not job_description:
-                failed.append(job_id)
-                continue
-            result = await generate_job_assessment(job_id, job_description)
-            if result and result.get("job_assessment") and result.get("llm_run"):
-                # Upsert job_assessment
-                await upsert_job_assessment(**result["job_assessment"])
-                # Upsert llm_run
-                await upsert_llm_run(**result["llm_run"])
-                processed += 1
-            else:
-                failed.append(job_id)
+
+        jobs_to_process = jobs_to_process[:jobs_to_run]
+        semaphore = asyncio.Semaphore(concurrency)
+        tasks = [process_job(job, semaphore) for job in jobs_to_process]
+        
+        results = await asyncio.gather(*tasks)
+
+        processed = sum(1 for r in results if r['status'] == 'success')
+        failed = [r['job_id'] for r in results if r['status'] == 'failed']
+
         return {
             "status": "success",
             "jobs_processed": processed,
-            "failed": failed,
+            "failed_jobs": failed,
             "total_requested": jobs_to_run,
-            "total_found": len(jobs)
+            "total_available": len(jobs_to_process)
         }
     except Exception as e:
         logger.error(f"Failed to generate job assessments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
-
 # # --- POST endpoints for each table ---
-
-# @app.post("/job_runs/upsert")
-# async def upsert_job_run_endpoint(payload: JobRunUpsertRequest):
-#     try:
-#         await upsert_job_run(
-#             job_run_id=payload.job_run_id,
-#             job_run_timestamp=payload.job_run_timestamp,
-#             job_run_keywords=payload.job_run_keywords
-#         )
-#         return {"status": "success", "job_run_id": payload.job_run_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert job_run: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert job_run.")
-
-# @app.post("/job_details/upsert")
-# async def upsert_job_detail_endpoint(payload: JobDetailUpsertRequest):
-#     try:
-#         await upsert_job_detail(**payload.model_dump())
-#         return {"status": "success", "job_id": payload.job_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert job_detail: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert job_detail.")
 
 @app.post("/document_store/upsert")
 async def upsert_document_endpoint(payload: DocumentUpsertRequest):
@@ -341,24 +379,6 @@ async def upsert_document_endpoint(payload: DocumentUpsertRequest):
         logger.error(f"Failed to upsert document: {e}")
         raise HTTPException(status_code=500, detail="Failed to upsert document.")
 
-# @app.post("/run_findings/upsert")
-# async def upsert_run_finding_endpoint(payload: RunFindingUpsertRequest):
-#     try:
-#         await upsert_run_finding(**payload.model_dump())
-#         return {"status": "success", "job_run_id": payload.job_run_id, "job_id": payload.job_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert run_finding: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert run_finding.")
-
-# @app.post("/job_assessment/upsert")
-# async def upsert_job_assessment_endpoint(payload: JobAssessmentUpsertRequest):
-#     try:
-#         await upsert_job_assessment(**payload.model_dump())
-#         return {"status": "success", "job_assessment_id": payload.job_assessment_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert job_assessment: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert job_assessment.")
-
 @app.post("/llm_models/upsert")
 async def upsert_llm_model_endpoint(payload: LLMModelUpsertRequest):
     try:
@@ -367,13 +387,3 @@ async def upsert_llm_model_endpoint(payload: LLMModelUpsertRequest):
     except Exception as e:
         logger.error(f"Failed to upsert llm_model: {e}")
         raise HTTPException(status_code=500, detail="Failed to upsert llm_model.")
-
-# @app.post("/llm_runs/upsert")
-# async def upsert_llm_run_endpoint(payload: LLMRunUpsertRequest):
-#     try:
-#         await upsert_llm_run(**payload.model_dump())
-#         return {"status": "success", "llm_run_id": payload.llm_run_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert llm_run: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert llm_run.")
-
