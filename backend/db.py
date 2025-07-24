@@ -337,6 +337,16 @@ async def get_job_ids_without_description() -> list[str]:
             rows = await cursor.fetchall()
             return [row["job_id"] for row in rows]
 
+async def get_job_ids_without_assessment() -> list[dict]:
+    """
+    Returns a list of job_id values from job_details where job_assessment_id is NULL or empty.
+    """
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT jd.job_id, jd.job_description from job_details jd LEFT JOIN job_assessment ja ON jd.job_id = ja.job_id WHERE ja.job_assessment_id IS NULL AND jd.job_description IS NOT NULL AND jd.job_description != ''") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
 async def get_document_store() -> list[dict]:
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
@@ -372,3 +382,30 @@ async def get_llm_runs() -> list[dict]:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+async def get_document_prompt_generate_job_assessment() -> dict:
+    """
+    Returns the prompt for generating job assessment.
+    """
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT document_id, document_markdown FROM document_store WHERE document_name = 'prompt_generate_job_assessment' ORDER BY document_timestamp DESC") as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"document_id": row["document_id"], "document_markdown": row["document_markdown"]}
+            else:
+                logger.warning("No job assessment prompt found in document_store.")
+                return {"document_id": None, "document_markdown": None}
+
+async def get_document_master_resume() -> dict:
+    """
+    Returns the master resume markdown content.
+    """
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT document_id, document_markdown FROM document_store WHERE document_name = 'master_resume' ORDER BY document_timestamp DESC") as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"document_id": row["document_id"], "document_markdown": row["document_markdown"]}
+            else:
+                logger.warning("No master resume found in document_store.")
+                return {"document_id": None, "document_markdown": None}

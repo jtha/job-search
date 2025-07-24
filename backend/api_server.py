@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Body, HTTPException
+from fastapi import FastAPI, Body, HTTPException, Query
 from pydantic import BaseModel
 
 from .db import (
@@ -18,10 +18,13 @@ from .db import (
     get_run_findings,
     get_job_assessment,
     get_llm_models,
-    get_llm_runs
+    get_llm_runs,
+    get_job_ids_without_description,
+    get_job_ids_without_assessment
 )
 from .crawler import scrape_linkedin_multi_page
 from .utilities import setup_logging, get_logger
+from .llm import generate_job_assessment
 
 # Pydantic Models
 
@@ -157,6 +160,14 @@ async def get_llm_models_endpoint():
 async def get_llm_runs_endpoint():
     return await get_llm_runs()
 
+@app.get("/get_job_ids_without_description", response_model=list[dict])
+async def get_job_ids_without_description_endpoint():
+    return await get_job_ids_without_description()
+
+@app.get("/get_job_ids_without_assessment", response_model=list[dict])
+async def get_job_ids_without_assessment_endpoint():
+    return await get_job_ids_without_assessment()
+
 
 # --- Endpoint to run LinkedIn scrape and upsert results ---
 
@@ -256,6 +267,47 @@ async def fill_missing_job_descriptions(min_length: int = 200):
         logger.error(f"Failed to fill missing job descriptions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
+
+# --- Endpoint to generate job assessments ---
+@app.post("/generate_job_assessments")
+async def generate_job_assessments_endpoint(jobs_to_run: int = Query(..., gt=0, description="Number of job assessments to generate")):
+    """
+    Generates job assessments for jobs missing assessments, upserts results to job_assessment and llm_runs tables.
+    """
+    try:
+        jobs = await get_job_ids_without_assessment()
+        if not jobs:
+            return {"status": "success", "message": "No jobs found without assessment.", "jobs_processed": 0}
+        jobs = jobs[:jobs_to_run]
+        processed = 0
+        failed = []
+        for job in jobs:
+            job_id = job.get("job_id")
+            job_description = job.get("job_description")
+            if not job_id or not job_description:
+                failed.append(job_id)
+                continue
+            result = await generate_job_assessment(job_id, job_description)
+            if result and result.get("job_assessment") and result.get("llm_run"):
+                # Upsert job_assessment
+                await upsert_job_assessment(**result["job_assessment"])
+                # Upsert llm_run
+                await upsert_llm_run(**result["llm_run"])
+                processed += 1
+            else:
+                failed.append(job_id)
+        return {
+            "status": "success",
+            "jobs_processed": processed,
+            "failed": failed,
+            "total_requested": jobs_to_run,
+            "total_found": len(jobs)
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate job assessments: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+
+
 # # --- POST endpoints for each table ---
 
 # @app.post("/job_runs/upsert")
@@ -280,14 +332,14 @@ async def fill_missing_job_descriptions(min_length: int = 200):
 #         logger.error(f"Failed to upsert job_detail: {e}")
 #         raise HTTPException(status_code=500, detail="Failed to upsert job_detail.")
 
-# @app.post("/document_store/upsert")
-# async def upsert_document_endpoint(payload: DocumentUpsertRequest):
-#     try:
-#         await upsert_document(**payload.model_dump())
-#         return {"status": "success", "document_id": payload.document_id}
-#     except Exception as e:
-#         logger.error(f"Failed to upsert document: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to upsert document.")
+@app.post("/document_store/upsert")
+async def upsert_document_endpoint(payload: DocumentUpsertRequest):
+    try:
+        await upsert_document(**payload.model_dump())
+        return {"status": "success", "document_id": payload.document_id}
+    except Exception as e:
+        logger.error(f"Failed to upsert document: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upsert document.")
 
 # @app.post("/run_findings/upsert")
 # async def upsert_run_finding_endpoint(payload: RunFindingUpsertRequest):

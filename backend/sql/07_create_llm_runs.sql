@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS llm_runs (
     FOREIGN KEY (llm_model_id) REFERENCES llm_models (model_id) ON DELETE SET NULL,
     FOREIGN KEY (job_id) REFERENCES job_details (job_id) ON DELETE SET NULL,
     FOREIGN KEY (llm_prompt_document_id) REFERENCES document_store (document_id) ON DELETE SET NULL,
-    FOREIGN KEY (assessment_id_link) REFERENCES job_assessment (assessment_id) ON DELETE SET NULL,
+    FOREIGN KEY (assessment_id_link) REFERENCES job_assessment (job_assessment_id) ON DELETE SET NULL,
     FOREIGN KEY (generated_document_id_link) REFERENCES document_store (document_id) ON DELETE SET NULL,
 
     -- Define all check constraints to ensure data integrity
