@@ -62,3 +62,8 @@ University of British Columbia | Vancouver, BC | Sep 2006 to May 2012
 • **Supply Chain & Operations:** Demand Planning, Supply Planning, Manpower Planning, Process Optimization & Automation, ERP Systems (SAP), Integrated Business Planning (IBP)  
 • **Leadership & Strategy:** Stakeholder Management, Cross-Functional Collaboration, Cost Reduction, Project Management  
 • **AI Tools:** Cursor, GitHub Copilot
+
+---
+
+### Certifications 
+• **Mastering LLMs For Developers & Data Scientists**

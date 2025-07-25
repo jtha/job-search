@@ -179,41 +179,47 @@ async def scrape_linkedin_job_page(url: str, min_length:int=200) -> str | None:
         page = await context.new_page()
         
         logger.info(f"Navigating to {url}...")
-        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-
-        # Wait for the main description container to be visible
-        description_locator = page.locator("div.jobs-description__content")
-        await description_locator.wait_for(state="visible", timeout=10000)
-
-        # Click the "see more" button if it exists to expand the description
-        try:
-            see_more_button = page.get_by_role("button", name="Click to see more description")
-            if await see_more_button.is_visible():
-                print("Clicking 'see more' to expand description...")
-                await see_more_button.click()
-                # Give it a moment to expand
-                await page.wait_for_timeout(500) 
-        except Exception as e:
-            # This is not a critical error; the button may not be present on shorter descriptions
-            logger.info("Could not find or click 'see more' button (might not be necessary).")
-
-        logger.info("Extracting job description HTML...")
-        job_desc_html = await description_locator.inner_html()
-
-        # The `heading_style="ATX"` option ensures that <h1> becomes #, <h2> becomes ##, etc.
-        soup = BeautifulSoup(job_desc_html, "lxml")
-        plain_text = soup.get_text()
-        text_length = len(plain_text)
-
-        if text_length < min_length:
-            await browser.close()
-            logger.error(f"Job description is too short ({text_length} characters). Skipping this job.")
-            return None
-
-        logger.info("Converting HTML to Markdown...")
-        job_description_md = md(job_desc_html, heading_style="ATX").strip()
         
-        await browser.close()
-        logger.info("Scraping complete.")
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+            # Wait for the main description container to be visible
+            description_locator = page.locator("div.jobs-description__content")
+            await description_locator.wait_for(state="visible", timeout=10000)
+
+            # Click the "see more" button if it exists to expand the description
+            try:
+                see_more_button = page.get_by_role("button", name="Click to see more description")
+                if await see_more_button.is_visible():
+                    print("Clicking 'see more' to expand description...")
+                    await see_more_button.click()
+                    # Give it a moment to expand
+                    await page.wait_for_timeout(500) 
+            except Exception as e:
+                # This is not a critical error; the button may not be present on shorter descriptions
+                logger.info("Could not find or click 'see more' button (might not be necessary).")
+
+            logger.info("Extracting job description HTML...")
+            job_desc_html = await description_locator.inner_html()
+
+            # The `heading_style="ATX"` option ensures that <h1> becomes #, <h2> becomes ##, etc.
+            soup = BeautifulSoup(job_desc_html, "lxml")
+            plain_text = soup.get_text()
+            text_length = len(plain_text)
+
+            if text_length < min_length:
+                await browser.close()
+                logger.error(f"Job description is too short ({text_length} characters). Skipping this job.")
+                return None
+
+            logger.info("Converting HTML to Markdown...")
+            job_description_md = md(job_desc_html, heading_style="ATX").strip()
+            
+            await browser.close()
+            logger.info("Scraping complete.")
+        except Exception as e:
+            await browser.close()
+            logger.error(f"Error while scraping LinkedIn job page: {e}")
+            return None
 
     return job_description_md

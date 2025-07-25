@@ -276,17 +276,29 @@ async def fill_missing_job_descriptions(min_length: int = 200):
                 logger.warning(f"No direct URL for job_id {job_id}, skipping.")
                 failed.append(job_id)
                 continue
-            desc = await scrape_linkedin_job_page(job_url, min_length=min_length)
-            if desc and isinstance(desc, str):
-                await upsert_job_description(job_id, desc)
-                updated += 1
-            else:
-                logger.warning(f"Failed to scrape description for job_id {job_id}.")
+            try:
+                desc = await scrape_linkedin_job_page(job_url, min_length=min_length)
+                if desc and isinstance(desc, str):
+                    await upsert_job_description(job_id, desc)
+                    updated += 1
+                else:
+                    logger.warning(f"Failed to scrape description for job_id {job_id}.")
+                    failed.append(job_id)
+            except Exception as e:
+                logger.error(f"Error scraping job_id {job_id}: {e}")
                 failed.append(job_id)
+                continue
         return {"status": "success", "updated": updated, "failed": failed, "total_missing": len(job_ids)}
     except Exception as e:
         logger.error(f"Failed to fill missing job descriptions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+    finally:
+        if len(failed) > 0:
+            await upsert_job_quarantine(
+                job_quarantine_id=str(uuid.uuid4()),
+                job_id=job_id,
+                job_quarantine_reason="fail_scrape_linkedin_job_page"
+            )
 
 
 # --- Endpoint to generate job assessments ---

@@ -219,3 +219,5 @@ backend/job_tracker.db
 *.db
 *.db-shm
 *.db-wal
+
+backend/db_exports

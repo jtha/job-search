@@ -343,10 +343,14 @@ async def get_job_details() -> list[dict]:
 
 async def get_job_ids_without_description() -> list[str]:
     """
-    Returns a list of job_id values from job_details where job_description is NULL or empty.
+    Returns a list of job_id values from job_details where job_description is NULL or empty, excluding those in job_quarantine.
     """
     db = await get_db()
-    async with db.execute("SELECT job_id FROM job_details WHERE job_description IS NULL OR job_description = ''") as cursor:
+    async with db.execute("""
+        SELECT job_id FROM job_details 
+        WHERE (job_description IS NULL OR job_description = '')
+        AND job_id NOT IN (SELECT job_id FROM job_quarantine)
+    """) as cursor:
         rows = await cursor.fetchall()
         return [row["job_id"] for row in rows]
 
