@@ -15,6 +15,7 @@ from .db import (
     upsert_llm_model,
     upsert_llm_run,
     upsert_job_quarantine,
+    upsert_prompt,
     get_job_runs,
     get_job_details,
     get_document_store,
@@ -23,11 +24,16 @@ from .db import (
     get_llm_models,
     get_llm_runs,
     get_job_ids_without_description,
-    get_job_ids_without_assessment,
+    get_job_details_without_assessment,
+    get_quarantined_job_details_for_assessment,
+    get_job_skills,
+    get_prompts,
+    get_llm_runs_v2
 )
+
 from .crawler import scrape_linkedin_multi_page
 from .utilities import setup_logging, get_logger
-from .llm import generate_job_assessment
+from .llm import generate_job_assessment, generate_failed_job_assessment
 
 # Pydantic Models
 
@@ -35,52 +41,17 @@ class LinkedInScrapeRequest(BaseModel):
     keywords: list[str]  # Changed to accept a list of keywords
     max_pages: int = 10
 
-# --- Pydantic Models for Upserts ---
-class JobRunUpsertRequest(BaseModel):
-    job_run_id: str
-    job_run_timestamp: int
-    job_run_keywords: str | None = None
+class JobDetailsWithoutAssessmentRequest(BaseModel):
+    limit: int = 100
+    days_back: int = 14
 
-class JobDetailUpsertRequest(BaseModel):
-    job_id: str
-    job_title: str | None = None
-    job_company: str | None = None
-    job_location: str | None = None
-    job_salary: str | None = None
-    job_url: str | None = None
-    job_url_direct: str | None = None
-    job_description: str | None = None
-    job_applied: int = 0
-    job_applied_timestamp: int | None = None
+# --- Pydantic Models for Upserts ---
 
 class DocumentUpsertRequest(BaseModel):
     document_id: str
     document_name: str
     document_timestamp: int
     document_markdown: str | None = None
-
-class RunFindingUpsertRequest(BaseModel):
-    job_run_id: str
-    job_id: str
-    job_run_page_num: int | None = None
-    job_run_rank: int | None = None
-
-class JobAssessmentUpsertRequest(BaseModel):
-    job_assessment_id: str
-    job_id: str
-    job_assessment_timestamp: int
-    job_assessment_rating: str | None = None
-    job_assessment_details: str | None = None
-    job_assessment_required_qualifications_matched_count: int | None = None
-    job_assessment_required_qualifications_count: int | None = None
-    job_assessment_additional_qualifications_matched_count: int | None = None
-    job_assessment_additional_qualifications_count: int | None = None
-    job_assessment_list_required_qualifications: str | None = None
-    job_assessment_list_matched_required_qualifications: str | None = None
-    job_assessment_list_additional_qualifications: str | None = None
-    job_assessment_list_matched_additional_qualifications: str | None = None
-    job_assessment_resume_document_id: str | None = None
-    job_assessment_prompt_document_id: str | None = None
 
 class LLMModelUpsertRequest(BaseModel):
     model_id: str
@@ -90,20 +61,19 @@ class LLMModelUpsertRequest(BaseModel):
     model_cpmt_completion: float | None = None
     model_cpmt_thinking: float | None = None
 
-class LLMRunUpsertRequest(BaseModel):
-    llm_run_id: str
-    llm_run_type: str
-    llm_model_id: str | None = None
-    job_id: str | None = None
-    llm_prompt_document_id: str | None = None
-    llm_run_prompt_tokens: int | None = None
-    llm_run_completion_tokens: int | None = None
-    llm_run_thinking_tokens: int | None = None
-    llm_run_total_tokens: int | None = None
-    assessment_id_link: str | None = None
-    generated_document_id_link: str | None = None
+class PromptUpsertRequest(BaseModel):
+    prompt_id: str
+    llm_run_type: str | None = None
+    model_id: str | None = None
+    prompt_system_prompt: str | None = None
+    prompt_template: str | None = None
+    prompt_temperature: float | None = None
+    prompt_response_schema: str | None = None
+    prompt_created_at: int | None = None
+    prompt_thinking_budget: int | None = None
 
-# Initialize Logging and FastAPI
+# Initialization
+
 setup_logging()
 logger = get_logger(__name__)
 
@@ -165,14 +135,31 @@ async def get_llm_models_endpoint():
 async def get_llm_runs_endpoint():
     return await get_llm_runs()
 
-@app.get("/get_job_ids_without_description", response_model=list[dict])
+@app.get("/get_job_ids_without_description", response_model=list[str])
 async def get_job_ids_without_description_endpoint():
     return await get_job_ids_without_description()
 
-@app.get("/get_job_ids_without_assessment", response_model=list[dict])
-async def get_job_ids_without_assessment_endpoint():
-    return await get_job_ids_without_assessment()
 
+
+# --- Endpoint for job_details without assessment ---
+@app.post("/job_details_without_assessment", response_model=list[dict])
+async def get_job_details_without_assessment_endpoint(payload: JobDetailsWithoutAssessmentRequest = Body(...)):
+    """
+    Returns job_details where job_skills_match is NULL, filtered by limit and days_back.
+    """
+    return await get_job_details_without_assessment(limit=payload.limit, days_back=payload.days_back)
+
+@app.get("/job_skills", response_model=list[dict])
+async def get_job_skills_endpoint():
+    return await get_job_skills()
+
+@app.get("/prompts", response_model=list[dict])
+async def get_prompts_endpoint():
+    return await get_prompts()
+
+@app.get("/llm_runs_v2", response_model=list[dict])
+async def get_llm_runs_v2_endpoint():
+    return await get_llm_runs_v2()
 
 # --- Endpoint to run LinkedIn scrape and upsert results ---
 
@@ -294,93 +281,75 @@ async def fill_missing_job_descriptions(min_length: int = 200):
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
     finally:
         if len(failed) > 0:
-            await upsert_job_quarantine(
-                job_quarantine_id=str(uuid.uuid4()),
-                job_id=job_id,
-                job_quarantine_reason="fail_scrape_linkedin_job_page"
-            )
-
+            logger.info(f"Quarantining failed job_ids: {failed}")
+            for job_id in failed:
+                await upsert_job_quarantine(
+                    job_quarantine_id=str(uuid.uuid4()),
+                    job_id=job_id,
+                    job_quarantine_reason="fail_scrape_linkedin_job_page"
+                )
 
 # --- Endpoint to generate job assessments ---
 @app.post("/generate_job_assessments")
 async def generate_job_assessments_endpoint(
-    jobs_to_run: int = Query(..., gt=0, description="Number of job assessments to generate"),
-    concurrency: int = Query(3, gt=0, description="Number of concurrent requests to run.")
+    limit: int = Query(100, gt=0, description="Number of jobs to process."),
+    days_back: int = Query(14, gt=0, description="Number of days back to look for jobs without assessments."),
+    semaphore_count: int = Query(5, gt=0, description="Number of concurrent tasks for processing jobs.")
 ):
     """
-    Generates job assessments for jobs missing assessments, upserts results to job_assessment and llm_runs tables.
+    Generates job assessments for jobs missing assessments.
+    This is a long-running process that will trigger the assessment generation and return immediately.
     """
-    async def process_job(job: dict, semaphore: asyncio.Semaphore):
-        job_id = job.get("job_id")
-        job_description = job.get("job_description")
-        if not job_id or not job_description:
-            logger.warning(f"Skipping job due to missing id or description: {job_id}")
-            return {"status": "failed", "job_id": job_id}
-
-        async with semaphore:
-            logger.info(f"Processing job_id: {job_id}")
-            try:
-                result = await generate_job_assessment(job_id, job_description)
-                if result and result.get("job_assessment") and result.get("llm_run"):
-                    # Upsert job_assessment
-                    try:
-                        await upsert_job_assessment(**result["job_assessment"])
-                    except Exception as e:
-                        logger.error(f"Failed to upsert job_assessment for job_id {job_id}: {e}", exc_info=True)
-                        quarantine_id = str(uuid.uuid4())
-                        await upsert_job_quarantine(
-                            job_quarantine_id=quarantine_id,
-                            job_id=job_id,
-                            job_quarantine_reason="fail_upsert_job_assessment"
-                        )
-                        return {"status": "failed", "job_id": job_id}
-                    # Upsert llm_run
-                    try:
-                        await upsert_llm_run(**result["llm_run"])
-                    except Exception as e:
-                        logger.error(f"Failed to upsert llm_run for job_id {job_id}: {e}", exc_info=True)
-                        quarantine_id = str(uuid.uuid4())
-                        await upsert_job_quarantine(
-                            job_quarantine_id=quarantine_id,
-                            job_id=job_id,
-                            job_quarantine_reason="fail_upsert_llm_run"
-                        )
-                        return {"status": "failed", "job_id": job_id}
-                    logger.info(f"Successfully processed and upserted assessment for job_id: {job_id}")
-                    return {"status": "success", "job_id": job_id}
-                else:
-                    logger.warning(f"Failed to generate assessment for job_id: {job_id}. Result was empty.")
-                    return {"status": "failed", "job_id": job_id}
-            except Exception as e:
-                logger.error(f"An exception occurred while processing job_id {job_id}: {e}", exc_info=True)
-                return {"status": "failed", "job_id": job_id}
-
     try:
-        jobs_to_process = await get_job_ids_without_assessment()
-        if not jobs_to_process:
-            return {"status": "success", "message": "No jobs found without assessment.", "jobs_processed": 0}
-
-        jobs_to_process = jobs_to_process[:jobs_to_run]
-        semaphore = asyncio.Semaphore(concurrency)
-        tasks = [process_job(job, semaphore) for job in jobs_to_process]
-        
-        results = await asyncio.gather(*tasks)
-
-        processed = sum(1 for r in results if r['status'] == 'success')
-        failed = [r['job_id'] for r in results if r['status'] == 'failed']
+        logger.info(f"Initiating job assessment generation for up to {limit} jobs from the last {days_back} days with {semaphore_count} concurrent tasks.")
+        # This endpoint will now run the generation in the background.
+        # For a more robust solution, consider using a background task runner like Celery or ARQ.
+        await generate_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
 
         return {
             "status": "success",
-            "jobs_processed": processed,
-            "failed_jobs": failed,
-            "total_requested": jobs_to_run,
-            "total_available": len(jobs_to_process)
+            "message": "Job assessment generation process started in the background.",
+            "details": {
+                "limit": limit,
+                "days_back": days_back,
+                "semaphore_count": semaphore_count
+            }
         }
     except Exception as e:
-        logger.error(f"Failed to generate job assessments: {e}", exc_info=True)
+        logger.error(f"Failed to initiate job assessment generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
-# # --- POST endpoints for each table ---
+# Add new endpoint to generate failed job assessments
+@app.post("/generate_failed_job_assessments")
+async def generate_failed_job_assessments_endpoint(
+    limit: int = Query(100, gt=0, description="Number of quarantined jobs to process."),
+    days_back: int = Query(14, gt=0, description="Number of days back to look for quarantined jobs without assessments."),
+    semaphore_count: int = Query(5, gt=0, description="Number of concurrent tasks for processing jobs.")
+):
+    """
+    Generates job assessments for quarantined jobs that failed previously.
+    This endpoint processes jobs that are in the job_quarantine table but still need assessments.
+    This is a long-running process that will trigger the assessment generation and return immediately.
+    """
+    try:
+        logger.info(f"Initiating failed job assessment generation for up to {limit} quarantined jobs from the last {days_back} days with {semaphore_count} concurrent tasks.")
+        # This endpoint will now run the generation in the background.
+        # For a more robust solution, consider using a background task runner like Celery or ARQ.
+        await generate_failed_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
+
+        return {
+            "status": "success",
+            "message": "Failed job assessment generation process started in the background.",
+            "details": {
+                "limit": limit,
+                "days_back": days_back,
+                "semaphore_count": semaphore_count
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to initiate failed job assessment generation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+
 
 @app.post("/document_store/upsert")
 async def upsert_document_endpoint(payload: DocumentUpsertRequest):
@@ -399,3 +368,12 @@ async def upsert_llm_model_endpoint(payload: LLMModelUpsertRequest):
     except Exception as e:
         logger.error(f"Failed to upsert llm_model: {e}")
         raise HTTPException(status_code=500, detail="Failed to upsert llm_model.")
+
+@app.post("/prompts/upsert")
+async def upsert_prompt_endpoint(payload: PromptUpsertRequest):
+    try:
+        await upsert_prompt(**payload.model_dump())
+        return {"status": "success", "prompt_id": payload.prompt_id}
+    except Exception as e:
+        logger.error(f"Failed to upsert prompt: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upsert prompt.")

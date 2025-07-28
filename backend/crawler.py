@@ -181,11 +181,11 @@ async def scrape_linkedin_job_page(url: str, min_length:int=200) -> str | None:
         logger.info(f"Navigating to {url}...")
         
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=5000)
 
             # Wait for the main description container to be visible
             description_locator = page.locator("div.jobs-description__content")
-            await description_locator.wait_for(state="visible", timeout=10000)
+            await description_locator.wait_for(state="visible", timeout=3000)
 
             # Click the "see more" button if it exists to expand the description
             try:
@@ -200,7 +200,7 @@ async def scrape_linkedin_job_page(url: str, min_length:int=200) -> str | None:
                 logger.info("Could not find or click 'see more' button (might not be necessary).")
 
             logger.info("Extracting job description HTML...")
-            job_desc_html = await description_locator.inner_html()
+            job_desc_html = await description_locator.inner_html(timeout=3000)
 
             # The `heading_style="ATX"` option ensures that <h1> becomes #, <h2> becomes ##, etc.
             soup = BeautifulSoup(job_desc_html, "lxml")
