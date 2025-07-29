@@ -1,7 +1,6 @@
 import os
 import uuid
 import time
-import json
 import asyncio
 from jinja2 import Template
 from typing import Optional
@@ -97,18 +96,18 @@ response_schema_2_3 = Schema(
 
 response_schema_3_1 = Schema(
             type = Type.OBJECT,
-            required = ["3A_match_reasoning", "3B_match"],
+            required = ["A_match_reasoning", "B_match"],
             properties = {
-                "3A_match_reasoning": Schema(
+                "A_match_reasoning": Schema(
                     type = Type.STRING,
                 ),
-                "3B_match": Schema(
+                "B_match": Schema(
                     type = Type.BOOLEAN,
                 ),
             },
             property_ordering=[
-                "3A_match_reasoning",
-                "3B_match",
+                "A_match_reasoning",
+                "B_match",
             ]
         )
 
@@ -144,6 +143,10 @@ async def generate(
         # logger.info(f"Completed {llm_run_type} generation for job {job_id} with model {model}.")
         thoughts_token_count = getattr(response.usage_metadata, "thoughts_token_count", 0) or 0
         # logger.info(f"Input:{response.usage_metadata.prompt_token_count}, Output:{response.usage_metadata.candidates_token_count + thoughts_token_count}")  # type: ignore
+        if not response.parsed:
+            llm_run_output = str(response.text)
+        else:
+            llm_run_output = str(response.parsed)
         await upsert_llm_run_v2(
             llm_run_id=llm_run_id,
             job_id=job_id,
@@ -151,7 +154,7 @@ async def generate(
             llm_run_model_id=model,
             llm_run_system_prompt_id=llm_run_system_prompt_id,
             llm_run_input=content,
-            llm_run_output=json.dumps(response.parsed),  # type: ignore
+            llm_run_output=llm_run_output,
             llm_run_input_tokens=response.usage_metadata.prompt_token_count,  # type: ignore
             llm_run_output_tokens=response.usage_metadata.candidates_token_count,  # type: ignore
             llm_run_thinking_tokens=thoughts_token_count,  # type: ignore
@@ -258,12 +261,11 @@ async def process_single_job_assessment(
         # Step 2.3: Final classification for each atomic object
         final_classifications = []
         for item in result_2_2['data']['atomic_objects']:  # type: ignore
-            new_item = {
-                "atomic_string": item['2A_atomic_string'],  # type: ignore
-                "category": item['2B_category']  # type: ignore
-            }
             content_2_3_template = Template(prompt_configuration_2_3['prompt_template'])
-            content_2_3 = content_2_3_template.render(input_object=str(new_item))
+            content_2_3 = content_2_3_template.render(
+                atomic_string=str(item['2A_atomic_string']),
+                category=str(item['2B_category'])
+            )
             try:
                 result_2_3 = await generate(
                     content=content_2_3,
@@ -303,38 +305,68 @@ async def process_single_job_assessment(
             return
 
         # Step 3.1: Assessment for each filtered item
-        filtered_items = [item for item in final_classifications if item['classification'] != 'evaluated_qualification']
+        filtered_items = [item for item in final_classifications if item['classification'] != 'evaluated_qualification' and item['classification'] is not None and item['classification'] != '']
         for item in filtered_items:
             content_3_1_template = Template(prompt_configuration_3_1['prompt_template'])
             content_3_1 = content_3_1_template.render(
                 candidate_profile=resume['document_markdown'],
                 requirement_string=item['atomic_string'],  # type: ignore
             )
-            try:
-                result_3_1 = await generate(
-                    content=content_3_1,
-                    system_instructions=prompt_configuration_3_1['prompt_system_prompt'],
-                    model=prompt_configuration_3_1['model_id'],
-                    temperature=prompt_configuration_3_1['prompt_temperature'],
-                    response_schema=response_schema_3_1,
-                    thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_3_1['prompt_thinking_budget']),
-                    job_id=job['job_id'],
-                    llm_run_system_prompt_id=prompt_configuration_3_1['prompt_id'],
-                    llm_run_type=prompt_configuration_3_1['llm_run_type']
-                )
-                # Track token usage
-                model_name = result_3_1['tokens']['model']
-                if model_name not in token_details_by_model:
-                    token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-                token_details_by_model[model_name]['input'] += result_3_1['tokens']['input_tokens']
-                token_details_by_model[model_name]['output'] += result_3_1['tokens']['output_tokens']
-                token_details_by_model[model_name]['thinking'] += result_3_1['tokens']['thinking_tokens']
-                
-                item['match_reasoning'] = result_3_1['data']['3A_match_reasoning']  # type: ignore
-                item['match'] = result_3_1['data']['3B_match']  # type: ignore
-            except Exception as e:
-                logger.exception(f"Error generating assessment for job {job['job_id']}: {e}")
-                has_errors = True
+            
+            # Retry logic for step 3.1 with validation
+            max_retries = 2
+            retry_count = 0
+            result_3_1 = None
+            
+            while retry_count <= max_retries:
+                try:
+                    result_3_1 = await generate(
+                        content=content_3_1,
+                        system_instructions=prompt_configuration_3_1['prompt_system_prompt'],
+                        model=prompt_configuration_3_1['model_id'],
+                        temperature=prompt_configuration_3_1['prompt_temperature'],
+                        response_schema=response_schema_3_1,
+                        thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_3_1['prompt_thinking_budget']),
+                        job_id=job['job_id'],
+                        llm_run_system_prompt_id=prompt_configuration_3_1['prompt_id'],
+                        llm_run_type=prompt_configuration_3_1['llm_run_type']
+                    )
+                    
+                    # Validate the result
+                    if (result_3_1['data']['A_match_reasoning'] is None or 
+                        result_3_1['data']['B_match'] is None):
+                        if retry_count < max_retries:
+                            retry_count += 1
+                            logger.warning(f"Invalid result for job {job['job_id']}, retry {retry_count}/{max_retries}")
+                            continue
+                        else:
+                            logger.error(f"Failed validation after {max_retries} retries for job {job['job_id']}")
+                            has_errors = True
+                            break
+                    
+                    # Track token usage
+                    model_name = result_3_1['tokens']['model']
+                    if model_name not in token_details_by_model:
+                        token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
+                    token_details_by_model[model_name]['input'] += result_3_1['tokens']['input_tokens']
+                    token_details_by_model[model_name]['output'] += result_3_1['tokens']['output_tokens']
+                    token_details_by_model[model_name]['thinking'] += result_3_1['tokens']['thinking_tokens']
+                    
+                    item['match_reasoning'] = result_3_1['data']['A_match_reasoning']  # type: ignore
+                    item['match'] = result_3_1['data']['B_match']  # type: ignore
+                    break  # Success, exit retry loop
+                    
+                except Exception as e:
+                    if retry_count < max_retries:
+                        retry_count += 1
+                        logger.warning(f"Error generating assessment for job {job['job_id']}, retry {retry_count}/{max_retries}: {e}")
+                        continue
+                    else:
+                        logger.exception(f"Error generating assessment for job {job['job_id']} after {max_retries} retries: {e}")
+                        has_errors = True
+                        break
+            
+            if has_errors:
                 break
 
         if has_errors:
@@ -347,16 +379,34 @@ async def process_single_job_assessment(
             return
 
         # Only upsert job skills if there were no errors in any preceding steps
-        for item in filtered_items:
-            await upsert_job_skills(
-                job_skill_id=str(uuid.uuid4()),
-                job_id=job['job_id'],
-                job_skills_atomic_string=item['atomic_string'],  
-                job_skills_type=item['classification'],  
-                job_skills_match=item['match'],  
-                job_skills_match_reasoning=item['match_reasoning'],
-                job_skills_resume_id=resume['document_id'],
-            )
+        # Upsert all skills from final_classifications, using match data if available
+        for item in final_classifications:
+            # Check if this item was processed for matching (in filtered_items)
+            match_data = next((filtered_item for filtered_item in filtered_items 
+                             if filtered_item['atomic_string'] == item['atomic_string']), None)
+            
+            if match_data:
+                # Item was processed for matching, use the match data
+                await upsert_job_skills(
+                    job_skill_id=str(uuid.uuid4()),
+                    job_id=job['job_id'],
+                    job_skills_atomic_string=item['atomic_string'],  
+                    job_skills_type=item['classification'],  
+                    job_skills_match=match_data['match'],  
+                    job_skills_match_reasoning=match_data['match_reasoning'],
+                    job_skills_resume_id=resume['document_id'],
+                )
+            else:
+                # Item was not processed for matching (e.g., evaluated_qualification), upsert without match data
+                await upsert_job_skills(
+                    job_skill_id=str(uuid.uuid4()),
+                    job_id=job['job_id'],
+                    job_skills_atomic_string=item['atomic_string'],  
+                    job_skills_type=item['classification'],  
+                    job_skills_match=None,  
+                    job_skills_match_reasoning=None,
+                    job_skills_resume_id=resume['document_id'],
+                )
         
         # Log completion with detailed token summary
         token_summary_parts = []
