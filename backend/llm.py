@@ -18,7 +18,8 @@ from .db import (
     get_job_details_without_assessment,
     get_quarantined_job_details_for_assessment,
     upsert_llm_run_v2,
-    upsert_job_skills
+    upsert_job_skills,
+    delete_job_quarantine
 )
 
 load_dotenv()
@@ -184,8 +185,12 @@ async def process_single_job_assessment(
     prompt_configuration_2_3: dict,
     prompt_configuration_3_1: dict,
     semaphore: asyncio.Semaphore
-) -> None:
-    """Process assessment for a single job with semaphore control for concurrency."""
+) -> bool:
+    """Process assessment for a single job with semaphore control for concurrency.
+    
+    Returns:
+        bool: True if the job assessment was completed successfully, False if it failed.
+    """
     async with semaphore:
         job_id = job['job_id']
         logger.info(f"Generating job assessment for job_id {job_id}")
@@ -223,7 +228,7 @@ async def process_single_job_assessment(
                 job_quarantine_reason="failed_generate_jobdesc_tagging",
                 job_quarantine_timestamp=int(time.time())
             )
-            return
+            return False
 
         # Step 2.2: Job description atomizing
         content_2_2_template = Template(prompt_configuration_2_2['prompt_template'])
@@ -256,7 +261,7 @@ async def process_single_job_assessment(
                 job_quarantine_reason="failed_generate_jobdesc_atomizing",
                 job_quarantine_timestamp=int(time.time())
             )
-            return
+            return False
 
         # Step 2.3: Final classification for each atomic object
         final_classifications = []
@@ -302,7 +307,7 @@ async def process_single_job_assessment(
                 job_quarantine_reason="failed_generate_jobdesc_final",
                 job_quarantine_timestamp=int(time.time())
             )
-            return
+            return False
 
         # Step 3.1: Assessment for each filtered item
         filtered_items = [item for item in final_classifications if item['classification'] != 'evaluated_qualification' and item['classification'] is not None and item['classification'] != '']
@@ -376,7 +381,7 @@ async def process_single_job_assessment(
                 job_quarantine_reason="failed_generate_assessment",
                 job_quarantine_timestamp=int(time.time())
             )
-            return
+            return False
 
         # Only upsert job skills if there were no errors in any preceding steps
         # Upsert all skills from final_classifications, using match data if available
@@ -415,35 +420,37 @@ async def process_single_job_assessment(
             token_summary_parts.append(summary)
         token_summary = "; ".join(token_summary_parts)
         logger.info(f"Job assessment finished for job_id {job_id}, token consumption by model: {token_summary}")
+        
+        return True
 
 async def generate_job_assessment(limit:int=100, days_back:int=14, semaphore_count:int=5):
 
     resume = await get_document_master_resume()
     if resume["document_markdown"] is None:
         logger.error("Master resume not found.")
-        return None
+        return {"error": "Master resume not found"}
 
     prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_jobdesc_tagging")
     if prompt_configuration_2_1 is None:
         logger.error("Prompt configuration for job description tagging not found.")
-        return None
+        return {"error": "Prompt configuration for job description tagging not found"}
     prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_jobdesc_atomizing")
     if prompt_configuration_2_2 is None:
         logger.error("Prompt configuration for job description atomizing not found.")
-        return None
+        return {"error": "Prompt configuration for job description atomizing not found"}
     prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_jobdesc_final")
     if prompt_configuration_2_3 is None:
         logger.error("Prompt configuration for job description final processing not found.")
-        return None
+        return {"error": "Prompt configuration for job description final processing not found"}
     prompt_configuration_3_1 = await get_latest_prompt("ja_3_1_assessment")
     if prompt_configuration_3_1 is None:
         logger.error("Prompt configuration for job assessment not found.")
-        return None
+        return {"error": "Prompt configuration for job assessment not found"}
 
     job_details = await get_job_details_without_assessment(limit=limit, days_back=days_back)
     if not job_details:
         # logger.info(f"No job details found without assessment for the last {days_back}")
-        return None
+        return {"total_processed": 0, "successful": 0, "failed": 0, "exceptions": 0, "message": "No jobs found without assessment"}
     
     # logger.info(f"Found {len(job_details)} job details without assessment for the last {days_back} days.")
 
@@ -466,8 +473,22 @@ async def generate_job_assessment(limit:int=100, days_back:int=14, semaphore_cou
     
     # Execute all tasks concurrently with semaphore control
     # logger.info(f"Starting concurrent job assessment processing with {semaphore_count} concurrent tasks")
-    await asyncio.gather(*tasks, return_exceptions=True)
-    # logger.info(f"Completed processing {len(job_details)} jobs")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Count successful vs failed jobs for logging
+    successful_count = sum(1 for result in results if isinstance(result, bool) and result)
+    failed_count = sum(1 for result in results if isinstance(result, bool) and not result)
+    exception_count = sum(1 for result in results if isinstance(result, Exception))
+    
+    # logger.info(f"Completed processing {len(job_details)} jobs: {successful_count} succeeded, {failed_count} failed, {exception_count} had exceptions")
+    
+    # Return summary of results
+    return {
+        "total_processed": len(job_details),
+        "successful": successful_count,
+        "failed": failed_count,
+        "exceptions": exception_count
+    }
 
 async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaphore_count:int=5):
     """
@@ -477,38 +498,38 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
     resume = await get_document_master_resume()
     if resume["document_markdown"] is None:
         logger.error("Master resume not found.")
-        return None
+        return {"error": "Master resume not found"}
 
     prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_jobdesc_tagging")
     if prompt_configuration_2_1 is None:
         logger.error("Prompt configuration for job description tagging not found.")
-        return None
+        return {"error": "Prompt configuration for job description tagging not found"}
     prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_jobdesc_atomizing")
     if prompt_configuration_2_2 is None:
         logger.error("Prompt configuration for job description atomizing not found.")
-        return None
+        return {"error": "Prompt configuration for job description atomizing not found"}
     prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_jobdesc_final")
     if prompt_configuration_2_3 is None:
         logger.error("Prompt configuration for job description final processing not found.")
-        return None
+        return {"error": "Prompt configuration for job description final processing not found"}
     prompt_configuration_3_1 = await get_latest_prompt("ja_3_1_assessment")
     if prompt_configuration_3_1 is None:
         logger.error("Prompt configuration for job assessment not found.")
-        return None
+        return {"error": "Prompt configuration for job assessment not found"}
 
     job_details = await get_quarantined_job_details_for_assessment(limit=limit, days_back=days_back)
     if not job_details:
         # logger.info(f"No quarantined job details found for assessment for the last {days_back} days")
-        return None
+        return {"total_processed": 0, "successful": 0, "failed": 0, "exceptions": 0, "quarantine_removed": 0, "message": "No quarantined jobs found for assessment"}
     
     # logger.info(f"Found {len(job_details)} quarantined job details for assessment for the last {days_back} days.")
 
     # Create semaphore for controlling concurrency
     semaphore = asyncio.Semaphore(semaphore_count)
     
-    # Create tasks for concurrent processing
-    tasks = [
-        process_single_job_assessment(
+    # Create tasks for concurrent processing with job info
+    job_assessment_tasks = [
+        (job, process_single_job_assessment(
             job=job,
             resume=resume,
             prompt_configuration_2_1=prompt_configuration_2_1,
@@ -516,11 +537,39 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
             prompt_configuration_2_3=prompt_configuration_2_3,
             prompt_configuration_3_1=prompt_configuration_3_1,
             semaphore=semaphore
-        )
+        ))
         for job in job_details
     ]
     
     # Execute all tasks concurrently with semaphore control
     # logger.info(f"Starting concurrent failed job assessment processing with {semaphore_count} concurrent tasks")
-    await asyncio.gather(*tasks, return_exceptions=True)
-    # logger.info(f"Completed processing {len(job_details)} quarantined jobs")
+    results = await asyncio.gather(*[task for _, task in job_assessment_tasks], return_exceptions=True)
+    
+    # Process results and delete quarantine records for successful jobs
+    successful_jobs = []
+    failed_count = 0
+    exception_count = 0
+    
+    for i, (job, result) in enumerate(zip([job for job, _ in job_assessment_tasks], results)):
+        if isinstance(result, bool) and result:  # Success
+            successful_jobs.append(job['job_id'])
+            await delete_job_quarantine(job['job_id'])
+        elif isinstance(result, bool) and not result:  # Failed
+            failed_count += 1
+        elif isinstance(result, Exception):
+            logger.exception(f"Task failed with exception for job {job['job_id']}: {result}")
+            exception_count += 1
+    
+    if successful_jobs:
+        logger.info(f"Successfully processed and removed quarantine for {len(successful_jobs)} jobs: {successful_jobs}")
+    
+    # logger.info(f"Completed processing {len(job_details)} quarantined jobs, {len(successful_jobs)} succeeded")
+    
+    # Return summary of results
+    return {
+        "total_processed": len(job_details),
+        "successful": len(successful_jobs),
+        "failed": failed_count,
+        "exceptions": exception_count,
+        "quarantine_removed": len(successful_jobs)
+    }

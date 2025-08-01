@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Lead Generation System is a sophisticated web scraping solution designed to automatically discover and collect job postings from Job Boards Site. It serves as the foundation of the job search automation pipeline, providing high-quality job leads for further analysis and assessment.
+The Lead Generation System is a sophisticated web scraping solution designed to automatically discover and collect job postings from LinkedIn. It serves as the foundation of the job search automation pipeline, providing high-quality job leads for further analysis and assessment.
 
 ## System Architecture
 
 ### Core Components
 
-1. **Job Boards Site Crawler** (`backend/crawler.py`)
+1. **LinkedIn Crawler** (`backend/crawler.py`)
    - Multi-page job listing scraper
    - Individual job description extractor
    - Browser automation using Playwright
@@ -30,7 +30,7 @@ The Lead Generation System is a sophisticated web scraping solution designed to 
 The system uses **Playwright** for browser automation, providing:
 
 - **Headless Operation**: Runs without visible browser interface for production
-- **Authentication Persistence**: Uses stored cookies for Job Boards Site session management
+- **Authentication Persistence**: Uses stored cookies for LinkedIn session management
 - **Network State Management**: Handles dynamic content loading and pagination
 - **Robust Error Handling**: Graceful degradation when elements aren't found
 
@@ -200,9 +200,9 @@ job_applied_timestamp   INTEGER
 
 ### Primary Scraping Endpoint
 
-**POST** `/scrape_job_boards_multi_page`
+**POST** `/scrape_linkedin_multi_page`
 
-Initiates multi-page Job Boards Site job scraping for specified keywords.
+Initiates multi-page LinkedIn job scraping for specified keywords.
 
 **Request Body:**
 ```json
@@ -220,9 +220,7 @@ Initiates multi-page Job Boards Site job scraping for specified keywords.
             "keyword": "data analyst",
             "status": "success",
             "job_run_id": "uuid-string",
-            "jobs_found": 25,
-            "jobs_new": 15,
-            "jobs_updated": 10
+            "jobs_found": 25
         }
     ]
 }
@@ -230,15 +228,20 @@ Initiates multi-page Job Boards Site job scraping for specified keywords.
 
 ### Description Extraction Endpoint
 
-**POST** `/get_job_descriptions`
+**POST** `/fill_missing_job_descriptions`
 
 Extracts detailed descriptions for jobs without full content.
 
-**Request Body:**
+**Query Parameters:**
+- `min_length`: Minimum character length for valid descriptions (default: 200)
+
+**Response:**
 ```json
 {
-    "max_jobs": 50,
-    "min_length": 200
+    "status": "success",
+    "updated": 15,
+    "failed": 2,
+    "total_missing": 17
 }
 ```
 

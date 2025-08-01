@@ -30,13 +30,14 @@ The Lead Qualification System is an AI-powered job assessment engine that automa
 
 ## Assessment Pipeline
 
+The system employs a sophisticated 4-step pipeline for job assessment:
+
 ### Phase 1: Job Description Deconstruction
 
-The system breaks down job postings into analyzable components through a multi-step process:
+#### Step 2.1: Initial Tagging (`ja_2_1_jobdesc_tagging`)
+Extracts and categorizes job requirements from raw job descriptions:
 
-#### Step 1: Initial Tagging (`ja_2_1_jobdesc_tagging`)
 ```python
-# Extract and categorize job requirements
 response_schema_2_1 = Schema(
     type=Type.OBJECT,
     required=["tagged_list"],
@@ -48,6 +49,134 @@ response_schema_2_1 = Schema(
                 required=["2A_raw_string", "2B_category"],
                 properties={
                     "2A_raw_string": Schema(type=Type.STRING),
+                    "2B_category": Schema(
+                        type=Type.STRING,
+                        enum=["required", "additional"]
+                    )
+                }
+            )
+        )
+    }
+)
+```
+
+**Output Example:**
+```json
+{
+  "tagged_list": [
+    {
+      "2A_raw_string": "Bachelor's degree in Computer Science or related field",
+      "2B_category": "required"
+    },
+    {
+      "2A_raw_string": "Experience with cloud platforms like AWS or Azure",
+      "2B_category": "additional"
+    }
+  ]
+}
+```
+
+#### Step 2.2: Atomic Decomposition (`ja_2_2_jobdesc_atomizing`)
+Breaks down tagged requirements into atomic, individually assessable components:
+
+```python
+response_schema_2_2 = Schema(
+    type=Type.OBJECT,
+    required=["atomic_objects"],
+    properties={
+        "atomic_objects": Schema(
+            type=Type.ARRAY,
+            items=Schema(
+                type=Type.OBJECT,
+                required=["2A_atomic_string", "2B_category"],
+                properties={
+                    "2A_atomic_string": Schema(type=Type.STRING),
+                    "2B_category": Schema(
+                        type=Type.STRING,
+                        enum=["required", "additional"]
+                    )
+                }
+            )
+        )
+    }
+)
+```
+
+**Input:** Tagged list from Step 2.1
+**Output Example:**
+```json
+{
+  "atomic_objects": [
+    {
+      "2A_atomic_string": "Bachelor's degree in Computer Science",
+      "2B_category": "required"
+    },
+    {
+      "2A_atomic_string": "Bachelor's degree in related technical field",
+      "2B_category": "required"
+    },
+    {
+      "2A_atomic_string": "AWS experience",
+      "2B_category": "additional"
+    },
+    {
+      "2A_atomic_string": "Azure experience",
+      "2B_category": "additional"
+    }
+  ]
+}
+```
+
+#### Step 2.3: Final Classification (`ja_2_3_jobdesc_final`)
+Applies final categorization to each atomic requirement:
+
+```python
+response_schema_2_3 = Schema(
+    type=Type.OBJECT,
+    required=["classification"],
+    properties={
+        "classification": Schema(
+            type=Type.STRING,
+            enum=["required_qualification", "additional_qualification", "evaluated_qualification"]
+        )
+    }
+)
+```
+
+**Categories:**
+- **required_qualification**: Must be assessed against resume
+- **additional_qualification**: Should be assessed against resume  
+- **evaluated_qualification**: Skipped from assessment (e.g., subjective requirements)
+
+### Phase 2: Resume Matching
+
+#### Step 3.1: Individual Assessment (`ja_3_1_assessment`)
+Each qualified atomic requirement is individually assessed against the candidate's resume:
+
+```python
+response_schema_3_1 = Schema(
+    type=Type.OBJECT,
+    required=["A_match_reasoning", "B_match"],
+    properties={
+        "A_match_reasoning": Schema(type=Type.STRING),
+        "B_match": Schema(type=Type.BOOLEAN)
+    }
+)
+```
+
+**Process:**
+1. Template renders requirement against candidate profile
+2. AI provides detailed reasoning for match/no-match decision
+3. Boolean match result determined
+4. Retry logic ensures valid responses
+
+**Output Example:**
+```json
+{
+  "A_match_reasoning": "The candidate has a Master's degree in Data Science, which exceeds the Bachelor's requirement in Computer Science. Their coursework included programming, algorithms, and software engineering fundamentals.",
+  "B_match": true
+}
+```
                     "2B_category": Schema(
                         type=Type.STRING,
                         enum=["required", "additional"]
@@ -115,10 +244,10 @@ response_schema_2_3 = Schema(
 # Assess each requirement against candidate profile
 response_schema_3_1 = Schema(
     type=Type.OBJECT,
-    required=["3A_match_reasoning", "3B_match"],
+    required=["A_match_reasoning", "B_match"],
     properties={
-        "3A_match_reasoning": Schema(type=Type.STRING),
-        "3B_match": Schema(type=Type.BOOLEAN)
+        "A_match_reasoning": Schema(type=Type.STRING),
+        "B_match": Schema(type=Type.BOOLEAN)
     }
 )
 ```
@@ -168,7 +297,28 @@ else:
 
 ## Technical Implementation
 
+### Data Flow Architecture
+
+```mermaid
+graph TD
+    A[Job Description] --> B[Step 2.1: Tagging]
+    B --> C[Step 2.2: Atomizing]
+    C --> D[Step 2.3: Classification]
+    D --> E[Step 3.1: Resume Matching]
+    E --> F[job_skills Table]
+    
+    B --> G[llm_runs_v2 Tracking]
+    C --> G
+    D --> G
+    E --> G
+    
+    H[Error] --> I[job_quarantine]
+    I --> J[Retry Process]
+```
+
 ### Concurrent Processing Architecture
+
+The system uses semaphore-controlled concurrency for scalable processing:
 
 ```python
 async def generate_job_assessment(limit: int = 100, days_back: int = 14, semaphore_count: int = 5):
@@ -190,16 +340,30 @@ async def generate_job_assessment(limit: int = 100, days_back: int = 14, semapho
     ]
     
     # Execute all tasks concurrently with semaphore control
-    await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+```
+
+### Prompt Management System
+
+The system uses a sophisticated prompt management approach:
+
+```python
+# Version-controlled prompts with model configuration
+prompt_configuration = await get_latest_prompt("ja_2_1_jobdesc_tagging")
+# Contains: prompt_system_prompt, prompt_template, model_id, temperature, etc.
+
+# Template rendering with context
+content_template = Template(prompt_configuration['prompt_template'])
+content = content_template.render(job_description=job['job_description'])
 ```
 
 ### Token Usage Monitoring
 
-The system tracks detailed token consumption across all AI operations:
+Comprehensive tracking of AI API consumption for cost optimization:
 
 ```python
 token_details_by_model = {}
-# Track token usage for each model
+# Track token usage for each model and operation type
 model_name = result['tokens']['model']
 if model_name not in token_details_by_model:
     token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
@@ -210,7 +374,7 @@ token_details_by_model[model_name]['thinking'] += result['tokens']['thinking_tok
 
 ### Error Handling and Quarantine System
 
-Failed assessments are tracked in a quarantine system for later retry:
+Sophisticated error recovery with categorized failure tracking:
 
 ```python
 # Quarantine failed jobs with specific error codes
@@ -219,6 +383,7 @@ await upsert_job_quarantine(
     job_id=job['job_id'],
     job_quarantine_reason="failed_generate_jobdesc_tagging",
     job_quarantine_timestamp=int(time.time())
+)
 )
 ```
 
@@ -273,23 +438,25 @@ CREATE TABLE IF NOT EXISTS llm_runs_v2 (
 Initiates AI-powered assessment generation for jobs without assessments.
 
 **Query Parameters**:
-```json
-{
-    "limit": 100,
-    "days_back": 14,
-    "semaphore_count": 5
-}
-```
+- `limit`: Number of jobs to process (default: 100)
+- `days_back`: Number of days back to look for jobs (default: 14) 
+- `semaphore_count`: Number of concurrent tasks (default: 5)
 
 **Response**:
 ```json
 {
     "status": "success",
-    "message": "Job assessment generation process started in the background.",
+    "message": "Job assessment generation process completed.",
     "details": {
         "limit": 100,
         "days_back": 14,
         "semaphore_count": 5
+    },
+    "results": {
+        "total_processed": 45,
+        "successful": 42,
+        "failed": 2,
+        "exceptions": 1
     }
 }
 ```
@@ -301,23 +468,50 @@ Initiates AI-powered assessment generation for jobs without assessments.
 Retries assessment generation for previously quarantined jobs.
 
 **Query Parameters**:
+- `limit`: Number of quarantined jobs to process (default: 100)
+- `days_back`: Number of days back to look for quarantined jobs (default: 14)
+- `semaphore_count`: Number of concurrent tasks (default: 5)
+
+**Response**:
 ```json
 {
-    "limit": 100,
-    "days_back": 14,
-    "semaphore_count": 5
+    "status": "success",
+    "message": "Failed job assessment generation process completed.",
+    "results": {
+        "total_processed": 15,
+        "successful": 12,
+        "failed": 2,
+        "exceptions": 1,
+        "quarantine_removed": 12
+    }
 }
 ```
 
 ### Assessment Data Retrieval
 
-**GET** `/job_assessment`
+**GET** `/job_skills`
 
-Returns all completed job assessments.
+Returns all atomic skill requirements and their match assessments.
+
+**GET** `/llm_runs_v2`
+
+Returns complete audit trail of all AI interactions with token usage.
 
 **POST** `/job_details_without_assessment`
 
 Returns jobs that haven't been assessed yet.
+
+**Request Body**:
+```json
+{
+    "limit": 100,
+    "days_back": 14
+}
+```
+
+**GET** `/prompts`
+
+Returns all AI prompt configurations with versioning information.
 
 **Request Body**:
 ```json

@@ -714,4 +714,18 @@ async def get_quarantined_job_details_for_assessment(limit:int=100, days_back:in
         """, (days_back, limit)) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
-    
+
+# --- Delete quarantine records for a job_id ---
+async def delete_job_quarantine(job_id: str):
+    """
+    Deletes all quarantine records for a given job_id.
+    This is typically called when a previously failed job succeeds on retry.
+    """
+    db = await get_db()
+    await db.execute(
+        "DELETE FROM job_quarantine WHERE job_id = ?",
+        (job_id,)
+    )
+    await db.commit()
+    logger.info(f"Deleted quarantine records for job_id: {job_id}")
+

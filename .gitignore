@@ -221,3 +221,4 @@ backend/job_tracker.db
 *.db-wal
 
 backend/db_exports
+manually_generated/

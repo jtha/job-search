@@ -304,16 +304,17 @@ async def generate_job_assessments_endpoint(
         logger.info(f"Initiating job assessment generation for up to {limit} jobs from the last {days_back} days with {semaphore_count} concurrent tasks.")
         # This endpoint will now run the generation in the background.
         # For a more robust solution, consider using a background task runner like Celery or ARQ.
-        await generate_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
+        result = await generate_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
 
         return {
             "status": "success",
-            "message": "Job assessment generation process started in the background.",
+            "message": "Job assessment generation process completed.",
             "details": {
                 "limit": limit,
                 "days_back": days_back,
                 "semaphore_count": semaphore_count
-            }
+            },
+            "results": result
         }
     except Exception as e:
         logger.error(f"Failed to initiate job assessment generation: {e}", exc_info=True)
@@ -335,16 +336,17 @@ async def generate_failed_job_assessments_endpoint(
         logger.info(f"Initiating failed job assessment generation for up to {limit} quarantined jobs from the last {days_back} days with {semaphore_count} concurrent tasks.")
         # This endpoint will now run the generation in the background.
         # For a more robust solution, consider using a background task runner like Celery or ARQ.
-        await generate_failed_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
+        result = await generate_failed_job_assessment(limit=limit, days_back=days_back, semaphore_count=semaphore_count)
 
         return {
             "status": "success",
-            "message": "Failed job assessment generation process started in the background.",
+            "message": "Failed job assessment generation process completed.",
             "details": {
                 "limit": limit,
                 "days_back": days_back,
                 "semaphore_count": semaphore_count
-            }
+            },
+            "results": result
         }
     except Exception as e:
         logger.error(f"Failed to initiate failed job assessment generation: {e}", exc_info=True)
