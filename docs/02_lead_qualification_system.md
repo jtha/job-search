@@ -2,14 +2,14 @@
 
 ## Overview
 
-The Lead Qualification System is an AI-powered job assessment engine that automatically evaluates job postings against a candidate's resume to determine match quality and qualification levels. Built on Google Gemini AI, the system provides detailed, structured analysis of job requirements versus candidate qualifications, enabling data-driven job application prioritization.
+The Lead Qualification System evaluates job postings against a candidate's resume to determine match quality and qualification levels. Built on Google Gemini AI, the system provides structured analysis of job requirements versus candidate qualifications, enabling data-driven job application prioritization.
 
 ## System Architecture
 
 ### Core Components
 
 1. **AI Assessment Engine** (`backend/llm.py`)
-   - Multi-stage job evaluation pipeline
+   - Job evaluation pipeline
    - Structured generation with JSON schemas
    - Concurrent processing for scalability
 
@@ -24,13 +24,13 @@ The Lead Qualification System is an AI-powered job assessment engine that automa
    - Match reasoning and scoring
 
 4. **Assessment Storage & Tracking**
-   - Comprehensive audit trails
+   - Audit trails
    - Token usage monitoring
    - Error handling and quarantine system
 
 ## Assessment Pipeline
 
-The system employs a sophisticated 4-step pipeline for job assessment:
+The system employs a 4-step pipeline for job assessment:
 
 ### Phase 1: Job Description Deconstruction
 
@@ -345,7 +345,7 @@ async def generate_job_assessment(limit: int = 100, days_back: int = 14, semapho
 
 ### Prompt Management System
 
-The system uses a sophisticated prompt management approach:
+The system uses a prompt management approach:
 
 ```python
 # Version-controlled prompts with model configuration
@@ -359,7 +359,7 @@ content = content_template.render(job_description=job['job_description'])
 
 ### Token Usage Monitoring
 
-Comprehensive tracking of AI API consumption for cost optimization:
+Tracking of AI API consumption for cost optimization:
 
 ```python
 token_details_by_model = {}
@@ -374,7 +374,7 @@ token_details_by_model[model_name]['thinking'] += result['tokens']['thinking_tok
 
 ### Error Handling and Quarantine System
 
-Sophisticated error recovery with categorized failure tracking:
+Error recovery with categorized failure tracking:
 
 ```python
 # Quarantine failed jobs with specific error codes
@@ -538,7 +538,7 @@ For each assessed job, individual skills are stored with:
 
 - **Concurrent Processing**: Configurable semaphore limits (default: 5 concurrent jobs)
 - **Processing Rate**: ~2-3 jobs per minute depending on job complexity
-- **Token Efficiency**: Optimized prompts reduce token consumption by ~30%
+- **Token Efficiency**: Refined prompts reduce token consumption by ~30%
 - **Error Recovery**: ~90% success rate on retry for quarantined jobs
 
 ### Cost Optimization
@@ -579,7 +579,7 @@ CREATE TABLE IF NOT EXISTS prompts (
 ### Model Configuration
 
 - **Primary Models**: 
-    * gemini-2.5-pro: resume parsing (most powerful model probably not exactly required, but this only run whenever updating resume)
+    * gemini-2.5-pro: resume parsing (high-capability model, runs only when updating resume)
     * gemini-2.5-flash: step 2_2 (more advanced model required for atomicizing skills correctly)
     * geminie-2.5-flash-lite: steps 2_1, 2_3 and 3_1 (simple extraction and classifications)
 - **Temperature Settings**: 0.1-0.3 for consistent outputs
@@ -601,7 +601,7 @@ if resume["document_markdown"] is None:
 
 ### Job Discovery Integration
 
-Seamlessly processes jobs from the lead generation system:
+Processes jobs from the lead generation system:
 
 ```python
 job_details = await get_job_details_without_assessment(limit=limit, days_back=days_back)
@@ -616,7 +616,7 @@ Results are stored in multiple tables for different analysis needs:
 
 ## Monitoring and Analytics
 
-### Comprehensive Logging
+### Logging
 
 The system provides detailed logging for operational monitoring:
 
@@ -645,7 +645,7 @@ Recommended monitoring includes:
 
 ### Assessment Validation
 
-The system implements multiple validation layers:
+The system implements validation layers:
 
 1. **Schema Validation**: Structured JSON responses ensure data consistency
 2. **Logic Validation**: Conservative matching reduces false positives
@@ -673,7 +673,7 @@ The system implements multiple validation layers:
 1. **Automatic Retry**: Failed jobs automatically queued for retry
 2. **Manual Intervention**: Tools for reviewing and correcting failed assessments
 3. **Fallback Processing**: Simplified assessment for problematic job descriptions
-4. **Data Integrity**: Comprehensive validation ensures clean data storage
+4. **Data Integrity**: Validation ensures clean data storage
 
 ## Future Enhancements
 
@@ -704,7 +704,7 @@ The system implements multiple validation layers:
 **High Token Consumption:**
 - Review prompt templates for efficiency
 - Check thinking budget settings
-- Optimize job description preprocessing
+- Review job description preprocessing
 
 **Inconsistent Results:**
 - Verify temperature settings
@@ -720,7 +720,7 @@ The system implements multiple validation layers:
 
 **Speed Improvements:**
 - Increase semaphore count (within API limits)
-- Optimize prompt templates
+- Refine prompt templates
 - Implement caching for repeated assessments
 
 **Cost Reduction:**
@@ -728,13 +728,13 @@ The system implements multiple validation layers:
 - Implement job complexity scoring
 - Batch similar assessments together
 
-**Quality Enhancement:**
+**Quality Improvement:**
 - Regular prompt validation and refinement
 - Implement assessment quality scoring
 - Add manual review workflows for edge cases
 
 ## Conclusion
 
-The Lead Qualification System represents a sophisticated approach to automated job assessment, combining advanced AI capabilities with robust engineering practices. Its multi-stage pipeline ensures thorough, consistent evaluation while maintaining transparency through detailed reasoning and comprehensive audit trails.
+The Lead Qualification System represents an approach to automated job assessment, combining AI capabilities with engineering practices. Its pipeline ensures thorough, consistent evaluation while maintaining transparency through detailed reasoning and audit trails.
 
-The system's modular design enables continuous improvement and adaptation to changing requirements, while its scalable architecture supports high-volume processing with cost optimization. Through careful balance of automation and human oversight, it significantly enhances the efficiency and effectiveness of job application prioritization.
+The system's modular design enables improvement and adaptation to changing requirements, while its scalable architecture supports high-volume processing with cost optimization. Through balance of automation and human oversight, it enhances the efficiency and effectiveness of job application prioritization.

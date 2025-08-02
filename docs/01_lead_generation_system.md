@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Lead Generation System is a sophisticated web scraping solution designed to automatically discover and collect job postings from LinkedIn. It serves as the foundation of the job search automation pipeline, providing high-quality job leads for further analysis and assessment.
+The Lead Generation System automates job posting discovery and collection from LinkedIn. It provides the foundation for the job search automation pipeline by collecting job leads for analysis and assessment.
 
 ## System Architecture
 
@@ -32,7 +32,7 @@ The system uses **Playwright** for browser automation, providing:
 - **Headless Operation**: Runs without visible browser interface for production
 - **Authentication Persistence**: Uses stored cookies for LinkedIn session management
 - **Network State Management**: Handles dynamic content loading and pagination
-- **Robust Error Handling**: Graceful degradation when elements aren't found
+- **Error Handling**: Graceful degradation when elements aren't found
 
 ```python
 # Browser context with stored authentication
@@ -52,7 +52,7 @@ The crawler implements intelligent pagination handling:
 3. **Smart Navigation**: Detects and clicks "Next" page buttons automatically
 
 ```python
-# Robust scrolling with patience counter
+# Scrolling with patience counter
 last_height = 0
 no_change_count = 0
 patience = 2
@@ -68,7 +68,7 @@ while no_change_count < patience:
 
 #### CSS Selectors for Data Extraction
 
-The system uses carefully crafted CSS selectors for reliable data extraction:
+The system uses CSS selectors for data extraction:
 
 ```python
 # Job listing selectors
@@ -95,7 +95,7 @@ max_pages = 5
 
 Each keyword generates a separate job run with unique tracking identifiers.
 
-### 2. Comprehensive Data Collection
+### 2. Data Collection
 
 For each job posting, the system extracts:
 
@@ -108,7 +108,7 @@ For each job posting, the system extracts:
 
 The system includes a secondary scraper for detailed job descriptions:
 
-- **Full Content Extraction**: Retrieves complete job descriptions
+- **Full Content Extraction**: Retrieves job descriptions
 - **Markdown Conversion**: Converts HTML to structured Markdown format
 - **Content Validation**: Ensures minimum description length for quality
 - **"See More" Handling**: Automatically expands truncated descriptions
@@ -322,7 +322,7 @@ DISTANCES = ["0", "5", "10", "25", "50", "100"]
 
 ## Monitoring and Logging
 
-### Comprehensive Logging
+### Logging
 
 The system provides detailed logging at multiple levels:
 
@@ -352,7 +352,7 @@ The system provides detailed logging at multiple levels:
 
 1. **Selector Maintenance**: Regular updates for Job Boards Site UI changes
 2. **Performance Optimization**: Reduce memory usage for large scraping runs
-3. **Error Recovery**: More sophisticated retry mechanisms
+3. **Error Recovery**: Enhanced retry mechanisms
 4. **Data Validation**: Enhanced validation for extracted job data
 
 ## Troubleshooting Guide
@@ -382,4 +382,4 @@ playwright codegen --browser chromium --save-storage=./playwright/.auth/auth_1.j
 
 ## Conclusion
 
-The Lead Generation System provides a robust, scalable solution for automated job discovery. Its combination of intelligent scraping, comprehensive data extraction, and reliable error handling makes it an essential component of the job search automation pipeline. The system's modular design allows for easy extension to additional job boards and enhanced functionality as requirements evolve.
+The Lead Generation System provides a scalable solution for automated job discovery. Its combination of intelligent scraping, data extraction, and error handling makes it a component of the job search automation pipeline. The system's modular design allows for extension to additional job boards and functionality as requirements evolve.

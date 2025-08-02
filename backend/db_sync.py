@@ -74,6 +74,9 @@ def sync_sqlite_to_bigquery_storage(
 ):
     """
     (Helper Function) Syncs data by batching rows to stay under API request size limits.
+    
+    This corrected version handles NULL values from SQLite by providing safe defaults,
+    preventing the BigQuery Write API from silently rejecting rows with missing REQUIRED fields.
     """
     write_client = BigQueryWriteClient()
     parent = write_client.table_path(project_id, dataset_id, table_id)
@@ -84,6 +87,7 @@ def sync_sqlite_to_bigquery_storage(
     engine = create_engine(f"sqlite:///{sqlite_db_path}")
     fields_map = {field.name: field for field in proto_message.DESCRIPTOR.fields}
 
+    # The COALESCE in the SQL query handles NULLs for numeric types at the source.
     select_clauses = []
     for field_name, field_descriptor in fields_map.items():
         if field_descriptor.cpp_type in [FieldDescriptor.CPPTYPE_INT32, FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
@@ -118,37 +122,48 @@ def sync_sqlite_to_bigquery_storage(
             for _, row in batch_df.iterrows():
                 proto_message_instance = proto_message()
                 for col, value in row.items():
-                    if pd.isna(value): continue
-                    
                     field_descriptor = fields_map.get(str(col))
-                    if not field_descriptor: continue
+                    if not field_descriptor:
+                        continue
 
                     cpp_type = field_descriptor.cpp_type
                     converted_value = value
-                    
+
+                    if pd.isna(converted_value):
+                        if cpp_type == FieldDescriptor.CPPTYPE_STRING:
+                            converted_value = ""
+                        elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32, FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
+                            converted_value = 0
+                        elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
+                            converted_value = False
+                        else:
+                            continue
+
+                    # Now, perform the final type conversion on the (potentially defaulted) value.
                     if cpp_type == FieldDescriptor.CPPTYPE_STRING:
-                        converted_value = str(value)
+                        converted_value = str(converted_value)
                     elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32]:
-                        converted_value = int(value)
+                        converted_value = int(converted_value)
                     elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
-                        converted_value = bool(value)
+                        converted_value = bool(converted_value)
                     elif cpp_type in [FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
-                        converted_value = float(value)
+                        converted_value = float(converted_value)
 
                     setattr(proto_message_instance, str(col), converted_value)
                 
                 proto_rows.serialized_rows.append(proto_message_instance.SerializeToString())
             
             # Create a request for the current batch.
-            proto_data = types.AppendRowsRequest.ProtoData()
-            proto_data.writer_schema = proto_schema
-            proto_data.rows = proto_rows
-            request = types.AppendRowsRequest(write_stream=stream_name, proto_rows=proto_data)
-            
-            # Append the current batch.
-            write_client.append_rows(iter([request]))
+            if proto_rows.serialized_rows:
+                proto_data = types.AppendRowsRequest.ProtoData()
+                proto_data.writer_schema = proto_schema
+                proto_data.rows = proto_rows
+                request = types.AppendRowsRequest(write_stream=stream_name, proto_rows=proto_data)
+                
+                # Append the current batch.
+                write_client.append_rows(iter([request]))
 
-        logger.info(f"INFO: Successfully streamed {total_rows} rows in { (total_rows + batch_size - 1) // batch_size } batches to staging table: {table_id}")
+        logger.info(f"INFO: Successfully sent {total_rows} rows in { (total_rows + batch_size - 1) // batch_size } batches to be streamed to staging table: {table_id}")
 
     except Exception as e:
         logger.exception(f"ERROR: Error appending rows during batch processing: {e}")
@@ -191,7 +206,7 @@ def sync_and_merge_sqlite_to_bigquery(
         )
 
         logger.info(f"Running MERGE from {staging_table_id} to {target_table_id}...")
-        on_clause = " AND ".join([f"T.{col} = S.{col}" for col in primary_key_columns])
+        on_clause = " AND ".join([f"CAST(T.{col} AS STRING) = CAST(S.{col} AS STRING)" for col in primary_key_columns])
         all_columns = [field.name for field in proto_message.DESCRIPTOR.fields]
         update_clause = ", ".join([f"T.{col} = S.{col}" for col in all_columns])
         insert_columns = ", ".join(all_columns)
@@ -226,15 +241,13 @@ def main():
     logger.info(f"Project ID: {PROJECT_ID}, Dataset ID: {DATASET_ID}")
     logger.info(f"Using SQLite DB file: {DB_FILE}")
 
-    # Sync job_runs
-    sqlite_db_path = DB_FILE
-    sqlite_table_name = "job_runs"
-    primary_key_columns = ["job_run_id"]
-    proto_message = JobRuns
 
+    sqlite_db_path = DB_FILE
+
+    # Sync job_runs
     sync_and_merge_sqlite_to_bigquery(
         PROJECT_ID, DATASET_ID, "job_runs",
-        sqlite_db_path, sqlite_table_name, primary_key_columns, proto_message,
+        sqlite_db_path, "job_runs", ["job_run_id"], JobRuns,
     )
 
     # Sync job_details

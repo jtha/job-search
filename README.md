@@ -1,7 +1,7 @@
 # job-search
 
 ## About the Project
-The motivation to build this project is to help a job seeker (me) retain their sanity while searching for a job in 2025. Based on many horror stories including personal experiences where job seekers may have to apply to hundreds and even thousands of job postings to land an interview, this project aims to streamline the job search process by maximizing both the volume of leads and the quality of job applications, ultimately improving the conversion of job leads.
+This project automates job search tasks for job seekers who need to apply to multiple positions efficiently. The system addresses the challenge of managing high-volume job applications by automating lead generation, qualification, and application tracking.
 
 Project scope:
 1. ✅ Build a lead generation system to find job postings.
@@ -19,24 +19,24 @@ Project scope:
 - **Job Description Extraction**: Secondary scraping to collect detailed job descriptions
 
 ### 2. Lead Qualification System (✅ Implemented)
-- **Multi-Stage AI Assessment**: 4-step job analysis pipeline using Google Gemini AI
+- **AI Assessment**: 4-step job analysis pipeline using Google Gemini AI
   - **Job Description Tagging**: Categorizes requirements as required vs. additional
   - **Atomic Decomposition**: Breaks down requirements into individual skill components
   - **Classification**: Categorizes skills as required, additional, or evaluated qualifications
   - **Resume Matching**: Individual assessment of each skill against candidate profile
 - **Structured Data Generation**: JSON schema-based responses for consistent analysis
-- **Skills Database**: Granular storage of job requirements and match results
+- **Skills Database**: Storage of job requirements and match results
 - **Concurrent Processing**: Semaphore-controlled parallel assessment for scalability
 - **Error Recovery**: Quarantine system with retry logic for failed assessments
-- **Token Usage Tracking**: Comprehensive monitoring of AI API consumption
+- **Token Usage Tracking**: Monitoring of AI API consumption
 
 ### 3. Data Management & Storage
-- **SQLite Database**: Comprehensive data model with 12+ tables including:
+- **SQLite Database**: Data model with 12+ tables including:
   - **job_skills**: Atomic skill requirements and match assessments
-  - **llm_runs_v2**: Complete audit trail of AI interactions
+  - **llm_runs_v2**: Audit trail of AI interactions
   - **job_quarantine**: Failed job processing management
   - **prompts**: Version-controlled AI prompt templates
-- **Job Lifecycle Tracking**: Complete job journey from discovery to assessment
+- **Job Lifecycle Tracking**: Job journey from discovery to assessment
 - **Document Store**: Version-controlled storage for resumes and prompts
 - **Prompt Management**: Template-based system with versioning and model configuration
 - **Data Export**: JSONL exports for analysis and backup
@@ -44,8 +44,8 @@ Project scope:
 ### 4. API & Integration
 - **FastAPI Server**: RESTful API for all operations
 - **Async Operations**: Non-blocking database and AI operations
-- **Comprehensive Logging**: Structured logging with rotation
-- **Error Handling**: Robust error handling and quarantine system
+- **Structured Logging**: Logging with rotation
+- **Error Handling**: Error handling and quarantine system
 
 ### Built With
 
@@ -176,7 +176,7 @@ playwright/                # Browser automation and authentication
 
 ## Database Schema
 
-The system uses a comprehensive SQLite schema with the following key tables:
+The system uses a SQLite schema with the following key tables:
 - `job_runs` - Search execution tracking
 - `job_details` - Master job listings
 - `job_skills` - Atomic skill requirements and match assessments
@@ -190,11 +190,11 @@ The system uses a comprehensive SQLite schema with the following key tables:
 
 ### Completed ✅
 - [x] LinkedIn job scraping system with authentication management
-- [x] SQLite database schema with 12+ tables for comprehensive data tracking
-- [x] Multi-stage AI-powered job assessment using Google Gemini with structured generation
+- [x] SQLite database schema with 12+ tables for data tracking
+- [x] AI-powered job assessment using Google Gemini with structured generation
 - [x] Atomic skill decomposition and requirement categorization system
 - [x] RESTful API with FastAPI including job collection and assessment endpoints
-- [x] Comprehensive logging and error handling with quarantine/retry system
+- [x] Logging and error handling with quarantine/retry system
 - [x] Prompt management system with versioning and model configuration
 - [x] Token usage tracking and cost monitoring for AI operations
 - [x] Concurrent processing with semaphore control for scalability
@@ -238,7 +238,7 @@ Once the server is running, visit:
 
 - **Rate Limiting**: Built-in delays to respect LinkedIn's terms of service
 - **Async Operations**: Non-blocking database and AI operations with semaphore control
-- **Error Recovery**: Comprehensive quarantine system with retry logic for problematic jobs
+- **Error Recovery**: Quarantine system with retry logic for problematic jobs
 - **Memory Management**: Efficient data processing for large job collections
 - **Token Optimization**: Monitoring and optimization of AI API usage and costs
 
@@ -260,7 +260,7 @@ Project Link: [https://github.com/jtha/job-search](https://github.com/jtha/job-s
 
 ## Acknowledgments
 
-* [Playwright](https://playwright.dev/) for excellent browser automation
-* [Google Gemini AI](https://ai.google.dev/) for powerful language processing
-* [FastAPI](https://fastapi.tiangolo.com/) for the fantastic web framework
-* [uv](https://github.com/astral-sh/uv) for modern Python package management
+* [Playwright](https://playwright.dev/) for browser automation
+* [Google Gemini AI](https://ai.google.dev/) for language processing
+* [FastAPI](https://fastapi.tiangolo.com/) for the web framework
+* [uv](https://github.com/astral-sh/uv) for Python package management

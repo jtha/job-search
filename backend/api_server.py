@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 import uuid
 
@@ -11,9 +10,7 @@ from .db import (
     upsert_job_detail,
     upsert_document,
     upsert_run_finding,
-    upsert_job_assessment,
     upsert_llm_model,
-    upsert_llm_run,
     upsert_job_quarantine,
     upsert_prompt,
     get_job_runs,
@@ -25,7 +22,6 @@ from .db import (
     get_llm_runs,
     get_job_ids_without_description,
     get_job_details_without_assessment,
-    get_quarantined_job_details_for_assessment,
     get_job_skills,
     get_prompts,
     get_llm_runs_v2
@@ -34,6 +30,7 @@ from .db import (
 from .crawler import scrape_linkedin_multi_page
 from .utilities import setup_logging, get_logger
 from .llm import generate_job_assessment, generate_failed_job_assessment
+# from .db_sync import main as sync_main
 
 # Pydantic Models
 
@@ -352,7 +349,6 @@ async def generate_failed_job_assessments_endpoint(
         logger.error(f"Failed to initiate failed job assessment generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
-
 @app.post("/document_store/upsert")
 async def upsert_document_endpoint(payload: DocumentUpsertRequest):
     try:
@@ -379,3 +375,25 @@ async def upsert_prompt_endpoint(payload: PromptUpsertRequest):
     except Exception as e:
         logger.error(f"Failed to upsert prompt: {e}")
         raise HTTPException(status_code=500, detail="Failed to upsert prompt.")
+    
+
+# --- Endpoint to trigger BigQuery sync ---
+# @app.post("/sync_to_bigquery")
+# async def sync_to_bigquery_endpoint():
+#     """
+#     Triggers the complete BigQuery sync process for all tables.
+#     This will sync data from the local SQLite database to BigQuery using the Storage Write API.
+#     """
+#     try:
+#         logger.info("Starting BigQuery sync process via API endpoint.")
+
+#         sync_main()
+        
+#         logger.info("BigQuery sync process completed successfully.")
+#         return {
+#             "status": "success",
+#             "message": "BigQuery sync completed successfully.",
+#         }
+#     except Exception as e:
+#         logger.error(f"Failed to complete BigQuery sync: {e}", exc_info=True)
+#         raise HTTPException(status_code=500, detail=f"BigQuery sync failed: {e}")

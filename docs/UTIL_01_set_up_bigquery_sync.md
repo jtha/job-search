@@ -1,19 +1,19 @@
 # BigQuery Sync Documentation
 
-This document provides comprehensive documentation for syncing SQLite data to BigQuery using the `db_sync.py` module. This is only relevant if you're using the BigQuery APIs to sync local SQLite data to Google Cloud BigQuery for analytics, reporting, or data warehousing purposes.
+This document provides documentation for syncing SQLite data to BigQuery using the `db_sync.py` module. This is only relevant if you're using the BigQuery APIs to sync local SQLite data to Google Cloud BigQuery for analytics, reporting, or data warehousing purposes.
 
 ## Overview
 
-The BigQuery sync system provides a robust, automated way to synchronize data from a local SQLite database to Google Cloud BigQuery. It uses a hybrid approach combining Protocol Buffers (protobuf) for data serialization and BigQuery's Storage Write API for efficient bulk data transfer.
+The BigQuery sync system provides automated synchronization from a local SQLite database to Google Cloud BigQuery. It uses a hybrid approach combining Protocol Buffers (protobuf) for data serialization and BigQuery's Storage Write API for bulk data transfer.
 
 ### Key Features
 
-- **Efficient Bulk Transfer**: Uses BigQuery Storage Write API for high-performance data streaming
+- **Bulk Transfer**: Uses BigQuery Storage Write API for high-performance data streaming
 - **Schema Compatibility**: Hybrid schema generation ensures compatibility between SQLite and BigQuery
 - **UPSERT Operations**: Performs MERGE operations to handle both inserts and updates
 - **Type Safety**: Uses Protocol Buffers for type-safe data serialization
 - **Automatic Cleanup**: Creates temporary staging tables that auto-expire
-- **Error Handling**: Comprehensive logging and error recovery
+- **Error Handling**: Logging and error recovery
 
 ### Architecture
 
@@ -113,7 +113,7 @@ The system uses a hybrid approach for schema generation:
 ### 2. Data Extraction and Conversion
 
 ```python
-# SQLite data is extracted using carefully crafted SQL queries
+# SQLite data is extracted using SQL queries
 select_clauses = []
 for field_name, field_descriptor in fields_map.items():
     if field_descriptor.cpp_type in [NUMERIC_TYPES]:
@@ -148,14 +148,67 @@ WHEN NOT MATCHED BY TARGET THEN
 
 ### Running the Sync
 
-To sync all tables:
+There are two ways to trigger the BigQuery sync:
+
+#### Method 1: Command Line
+
+To sync all tables via command line:
 
 ```bash
 cd backend
 python db_sync.py
 ```
 
-The sync will process all configured tables sequentially and provide detailed logging output.
+#### Method 2: API Endpoint
+
+To sync all tables via the API server:
+
+```bash
+# Start the API server first (if not already running)
+cd backend
+fastapi run api_server.py
+
+# Then trigger the sync via HTTP POST request
+curl -X POST "http://localhost:8000/sync_to_bigquery"
+```
+
+Or using Python requests:
+
+```python
+import requests
+
+response = requests.post("http://localhost:8000/sync_to_bigquery")
+print(response.json())
+```
+
+The API endpoint provides the following benefits:
+- Can be triggered remotely
+- Returns structured JSON response with status
+- Integrates with existing API authentication/logging
+- Can be easily incorporated into automation workflows
+
+Both methods will process all configured tables sequentially and provide detailed logging output.
+
+#### API Response Format
+
+The `/sync_to_bigquery` endpoint returns a JSON response:
+
+**Success Response:**
+```json
+{
+  "status": "success",
+  "message": "BigQuery sync completed successfully.",
+}
+```
+
+**Error Response:**
+```json
+{
+  "detail": "BigQuery sync failed: [error details]"
+}
+```
+
+**Note:** The sync operation can be a long-running process depending on the amount of data. The API endpoint will block until the sync is complete, so consider the timeout settings in your HTTP client.
 
 ### Adding New Tables
 
@@ -189,7 +242,7 @@ When updating table schemas:
 
 ### Logging
 
-The system provides comprehensive logging at multiple levels:
+The system provides logging at multiple levels:
 
 - **INFO**: Normal operation progress and batch processing
 - **WARNING**: Non-fatal issues like missing optional fields
