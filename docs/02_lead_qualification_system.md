@@ -523,37 +523,6 @@ Returns all AI prompt configurations with versioning information.
 
 ## Assessment Output Format
 
-### Structured Assessment Result
-
-```json
-{
-    "rating": "medium",
-    "assessment_details": "Job match is medium\n\nFor Company Name - Job Title\n\nYour profile matches several required qualifications...",
-    "required_qualifications_matched_count": 6,
-    "required_qualifications_count": 10,
-    "additional_qualifications_matched_count": 3,
-    "additional_qualifications_count": 5,
-    "list_required_qualifications": [
-        "5+ years of data analysis experience",
-        "SQL and Python proficiency",
-        "Experience with BI tools"
-    ],
-    "list_matched_required_qualifications": [
-        "✓ 5+ years of data analysis experience",
-        "✓ SQL and Python proficiency",
-        "? Experience with BI tools (Uses Metabase, not mentioned tools)"
-    ],
-    "list_additional_qualifications": [
-        "Master's degree preferred",
-        "Experience with cloud platforms"
-    ],
-    "list_matched_additional_qualifications": [
-        "? Master's degree preferred (Bachelor's degree only)",
-        "? Experience with cloud platforms (No cloud experience mentioned)"
-    ]
-}
-```
-
 ### Detailed Skills Breakdown
 
 For each assessed job, individual skills are stored with:
@@ -609,7 +578,10 @@ CREATE TABLE IF NOT EXISTS prompts (
 
 ### Model Configuration
 
-- **Primary Model**: Google Gemini 1.5 Pro
+- **Primary Models**: 
+    * gemini-2.5-pro: resume parsing (most powerful model probably not exactly required, but this only run whenever updating resume)
+    * gemini-2.5-flash: step 2_2 (more advanced model required for atomicizing skills correctly)
+    * geminie-2.5-flash-lite: steps 2_1, 2_3 and 3_1 (simple extraction and classifications)
 - **Temperature Settings**: 0.1-0.3 for consistent outputs
 - **Thinking Budget**: 30k tokens for complex reasoning
 - **Output Limits**: 2k-4k tokens depending on stage

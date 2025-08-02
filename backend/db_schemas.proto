@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package job_tracker;
+
+// Stores a record of each time the job crawler is executed.
+// This is the "parent" table for a crawling event.
+message JobRuns {
+    string job_run_id = 1;
+    int64 job_run_timestamp = 2;
+    string job_run_keywords = 3;
+}
+
+// Stores the master list of all unique jobs ever discovered across all runs.
+message JobDetails {
+    string job_id = 1;
+    string job_title = 2;
+    string job_company = 3;
+    string job_location = 4;
+    string job_salary = 5;
+    string job_url = 6;
+    string job_url_direct = 7;
+    string job_description = 8;
+    int64 job_applied = 9; // 0 or 1 (boolean as integer)
+    int64 job_applied_timestamp = 10;
+}
+
+// Stores raw documents, like resumes or job-specific cover letters, in Markdown format.
+message DocumentStore {
+    string document_id = 1;
+    string document_name = 2;
+    int64 document_timestamp = 3;
+    string document_markdown = 4;
+}
+
+// This is the many-to-many linking table.
+// It records every instance of a job being found during a specific run.
+message RunFindings {
+    string job_run_id = 1;
+    string job_id = 2;
+    int64 job_run_page_num = 3;
+    int64 job_run_rank = 4;
+}
+
+// Stores details and costs for different LLM models available for use.
+message LlmModels {
+    string model_id = 1;
+    string model_name = 2;
+    string model_provider = 3;
+    double model_cpmt_prompt = 4; // Cost Per Million Tokens (Prompt)
+    double model_cpmt_completion = 5; // Cost Per Million Tokens (Completion)
+    double model_cpmt_thinking = 6; // Cost Per Million Tokens (Thinking)
+}
+
+// Stores the master list of job_ids to skip during job processing.
+message JobQuarantine {
+    string job_quarantine_id = 1;
+    string job_id = 2;
+    string job_quarantine_reason = 3;
+    int64 job_quarantine_timestamp = 4;
+}
+
+// Stores job skills details, linking jobs to required skills and the qualification results
+message JobSkills {
+    string job_skill_id = 1;
+    string job_id = 2;
+    string job_skills_atomic_string = 3;
+    string job_skills_type = 4;
+    string job_skills_match_reasoning = 5;
+    bool job_skills_match = 6;
+    string job_skills_resume_id = 7;
+}
+
+// Stores prompt configurations for LLM runs
+message Prompt {
+    string prompt_id = 1;
+    string llm_run_type = 2;
+    string model_id = 3;
+    string prompt_system_prompt = 4;
+    string prompt_template = 5;
+    double prompt_temperature = 6;
+    string prompt_response_schema = 7;
+    int64 prompt_created_at = 8;
+    int64 prompt_thinking_budget = 9;
+}
+
+// Stores LLM execution runs with detailed metrics
+message LlmRunsV2 {
+    string llm_run_id = 1;
+    string job_id = 2;
+    string llm_run_type = 3;
+    string llm_run_model_id = 4;
+    string llm_run_system_prompt_id = 5;
+    string llm_run_input = 6;
+    string llm_run_output = 7;
+    int64 llm_run_input_tokens = 8;
+    int64 llm_run_output_tokens = 9;
+    int64 llm_run_thinking_tokens = 10;
+    int64 llm_run_total_tokens = 11;
+    int64 llm_run_start = 12;
+    int64 llm_run_end = 13;
+}
+
