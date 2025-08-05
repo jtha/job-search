@@ -124,34 +124,74 @@ def sync_sqlite_to_bigquery_storage(
                 for col, value in row.items():
                     field_descriptor = fields_map.get(str(col))
                     if not field_descriptor:
+                        logger.warning(f"Column '{col}' from SQLite not found in Protobuf schema. Skipping.")
                         continue
 
                     cpp_type = field_descriptor.cpp_type
-                    converted_value = value
+                    is_timestamp_by_name = str(col).endswith(('_timestamp', '_at', '_start', '_end'))
 
-                    if pd.isna(converted_value):
+                    # Handle NULLs by providing safe defaults before type conversion.
+                    # This prevents errors for REQUIRED fields in BigQuery.
+                    if pd.isna(value):
                         if cpp_type == FieldDescriptor.CPPTYPE_STRING:
-                            converted_value = ""
+                            value = ""
                         elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32, FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
-                            converted_value = 0
+                            value = 0
                         elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
-                            converted_value = False
-                        else:
-                            continue
+                            value = False
 
-                    # Now, perform the final type conversion on the (potentially defaulted) value.
-                    if cpp_type == FieldDescriptor.CPPTYPE_STRING:
-                        converted_value = str(converted_value)
-                    elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32]:
-                        converted_value = int(converted_value)
+                    # Perform type conversion.
+                    converted_value = value
+                    if is_timestamp_by_name and cpp_type == FieldDescriptor.CPPTYPE_INT64:
+                        # BQ expects microseconds for TIMESTAMP type via Storage Write API.
+                        # Convert from seconds (float from pandas) to microseconds (int).
+                        converted_value = int(float(value) * 1_000_000)
+                    elif cpp_type == FieldDescriptor.CPPTYPE_STRING:
+                        converted_value = str(value)
+                    elif cpp_type == FieldDescriptor.CPPTYPE_INT64: # This handles non-timestamp integers
+                        converted_value = int(value)
                     elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
-                        converted_value = bool(converted_value)
+                        converted_value = bool(value)
                     elif cpp_type in [FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
-                        converted_value = float(converted_value)
+                        converted_value = float(value)
 
                     setattr(proto_message_instance, str(col), converted_value)
                 
                 proto_rows.serialized_rows.append(proto_message_instance.SerializeToString())
+            # proto_rows = types.ProtoRows()
+            # for _, row in batch_df.iterrows():
+            #     proto_message_instance = proto_message()
+            #     for col, value in row.items():
+            #         field_descriptor = fields_map.get(str(col))
+            #         if not field_descriptor:
+            #             continue
+
+            #         cpp_type = field_descriptor.cpp_type
+            #         converted_value = value
+
+            #         if pd.isna(converted_value):
+            #             if cpp_type == FieldDescriptor.CPPTYPE_STRING:
+            #                 converted_value = ""
+            #             elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32, FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
+            #                 converted_value = 0
+            #             elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
+            #                 converted_value = False
+            #             else:
+            #                 continue
+
+            #         # Now, perform the final type conversion on the (potentially defaulted) value.
+            #         if cpp_type == FieldDescriptor.CPPTYPE_STRING:
+            #             converted_value = str(converted_value)
+            #         elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32]:
+            #             converted_value = int(converted_value)
+            #         elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
+            #             converted_value = bool(converted_value)
+            #         elif cpp_type in [FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
+            #             converted_value = float(converted_value)
+
+            #         setattr(proto_message_instance, str(col), converted_value)
+                
+                # proto_rows.serialized_rows.append(proto_message_instance.SerializeToString())
             
             # Create a request for the current batch.
             if proto_rows.serialized_rows:
