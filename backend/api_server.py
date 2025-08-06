@@ -289,9 +289,9 @@ async def fill_missing_job_descriptions(min_length: int = 200):
 # --- Endpoint to generate job assessments ---
 @app.post("/generate_job_assessments")
 async def generate_job_assessments_endpoint(
-    limit: int = Query(100, gt=0, description="Number of jobs to process."),
-    days_back: int = Query(14, gt=0, description="Number of days back to look for jobs without assessments."),
-    semaphore_count: int = Query(5, gt=0, description="Number of concurrent tasks for processing jobs.")
+    limit: int = Query(200, gt=0, description="Number of jobs to process."),
+    days_back: int = Query(7, gt=0, description="Number of days back to look for jobs without assessments."),
+    semaphore_count: int = Query(8, gt=0, description="Number of concurrent tasks for processing jobs.")
 ):
     """
     Generates job assessments for jobs missing assessments.
@@ -320,9 +320,9 @@ async def generate_job_assessments_endpoint(
 # Add new endpoint to generate failed job assessments
 @app.post("/generate_failed_job_assessments")
 async def generate_failed_job_assessments_endpoint(
-    limit: int = Query(100, gt=0, description="Number of quarantined jobs to process."),
-    days_back: int = Query(14, gt=0, description="Number of days back to look for quarantined jobs without assessments."),
-    semaphore_count: int = Query(5, gt=0, description="Number of concurrent tasks for processing jobs.")
+    limit: int = Query(200, gt=0, description="Number of quarantined jobs to process."),
+    days_back: int = Query(7, gt=0, description="Number of days back to look for quarantined jobs without assessments."),
+    semaphore_count: int = Query(8, gt=0, description="Number of concurrent tasks for processing jobs.")
 ):
     """
     Generates job assessments for quarantined jobs that failed previously.

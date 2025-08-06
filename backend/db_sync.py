@@ -158,40 +158,6 @@ def sync_sqlite_to_bigquery_storage(
                     setattr(proto_message_instance, str(col), converted_value)
                 
                 proto_rows.serialized_rows.append(proto_message_instance.SerializeToString())
-            # proto_rows = types.ProtoRows()
-            # for _, row in batch_df.iterrows():
-            #     proto_message_instance = proto_message()
-            #     for col, value in row.items():
-            #         field_descriptor = fields_map.get(str(col))
-            #         if not field_descriptor:
-            #             continue
-
-            #         cpp_type = field_descriptor.cpp_type
-            #         converted_value = value
-
-            #         if pd.isna(converted_value):
-            #             if cpp_type == FieldDescriptor.CPPTYPE_STRING:
-            #                 converted_value = ""
-            #             elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32, FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
-            #                 converted_value = 0
-            #             elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
-            #                 converted_value = False
-            #             else:
-            #                 continue
-
-            #         # Now, perform the final type conversion on the (potentially defaulted) value.
-            #         if cpp_type == FieldDescriptor.CPPTYPE_STRING:
-            #             converted_value = str(converted_value)
-            #         elif cpp_type in [FieldDescriptor.CPPTYPE_INT64, FieldDescriptor.CPPTYPE_INT32]:
-            #             converted_value = int(converted_value)
-            #         elif cpp_type == FieldDescriptor.CPPTYPE_BOOL:
-            #             converted_value = bool(converted_value)
-            #         elif cpp_type in [FieldDescriptor.CPPTYPE_DOUBLE, FieldDescriptor.CPPTYPE_FLOAT]:
-            #             converted_value = float(converted_value)
-
-            #         setattr(proto_message_instance, str(col), converted_value)
-                
-                # proto_rows.serialized_rows.append(proto_message_instance.SerializeToString())
             
             # Create a request for the current batch.
             if proto_rows.serialized_rows:

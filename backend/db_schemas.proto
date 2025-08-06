@@ -46,9 +46,9 @@ message LlmModels {
     string model_id = 1;
     string model_name = 2;
     string model_provider = 3;
-    int64 model_cpmt_prompt = 4; // Cost Per Million Tokens (Prompt)
-    int64 model_cpmt_completion = 5; // Cost Per Million Tokens (Completion)
-    int64 model_cpmt_thinking = 6; // Cost Per Million Tokens (Thinking)
+    float model_cpmt_prompt = 4; // Cost Per Million Tokens (Prompt)
+    float model_cpmt_completion = 5; // Cost Per Million Tokens (Completion)
+    float model_cpmt_thinking = 6; // Cost Per Million Tokens (Thinking)
 }
 
 // Stores the master list of job_ids to skip during job processing.
