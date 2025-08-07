@@ -85,7 +85,7 @@ async def fetch_response(
     max_reasoning_tokens: Optional[int] = 2000,
     examples: Optional[List[dict]] = None):
 
-    # logger.info(f"Fetching response from OpenRouter for model {model} with temperature {temperature} and max reasoning tokens {max_reasoning_tokens}")
+    logger.debug(f"Fetching response from OpenRouter for model {model} with temperature {temperature} and max reasoning tokens {max_reasoning_tokens}")
 
     messages = [{"role": "system", "content": system_instructions}]
     if examples:
