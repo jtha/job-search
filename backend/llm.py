@@ -97,8 +97,6 @@ async def fetch_response(
         "messages": messages,
         "reasoning": {
             "effort": "low"
-            # "max_tokens": max_reasoning_tokens,
-            # "exclude": False
         },
         "response_format": {
             "type": "json_schema",
