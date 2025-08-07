@@ -2,13 +2,15 @@ import os
 import uuid
 import time
 import asyncio
+import json
 from jinja2 import Template
-from typing import Optional
+from typing import Optional, List
+from enum import Enum
+from typing import Type
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from google.genai.types import Schema, Type
+import httpx
+from pydantic import BaseModel, Field
 
 from .utilities import setup_logging, get_logger
 from .db import (
@@ -21,96 +23,112 @@ from .db import (
     upsert_job_skills,
     delete_job_quarantine
 )
+from .llm_examples import LLMExamples
 
 load_dotenv()
 setup_logging()
 logger = get_logger(__name__)
 
-client = genai.Client( api_key=os.getenv("GEMINI_API_KEY") )
 
-# Define response schemas for structured generation
+# Pydantic models for response schemas
 
-response_schema_2_1=Schema(
-    type = Type.OBJECT,
-    required = ["tagged_list"],
-    properties = {
-        "tagged_list": Schema(
-            type = Type.ARRAY,
-            items = Schema(
-                type = Type.OBJECT,
-                required = ["2A_raw_string", "2B_category"],
-                properties = {
-                    "2A_raw_string": Schema(
-                        type = Type.STRING,
-                    ),
-                    "2B_category": Schema(
-                        type = Type.STRING,
-                        enum = ["required", "additional"],
-                    ),
-                },
-                property_ordering=[
-                    "2A_raw_string",
-                    "2B_category",
-                ]
-            ),
-        ),
+class CategoryEnum(str, Enum):
+    required = "required"
+    additional = "additional"
+
+class ClassificationEnum(str, Enum):
+    required_qualification = "required_qualification"
+    additional_qualification = "additional_qualification"
+    evaluated_qualification = "evaluated_qualification"
+
+class TaggedList(BaseModel):
+    raw_string: str = Field(..., description="Extracted qualification/skill from the job description")
+    category: CategoryEnum = Field(..., description="The category of the raw string, can either be 'required' or 'additional'")
+
+class AtomicObject(BaseModel):
+    requirement_string: str = Field(..., description="The atomic string result from breaking down of qualifications/skills into atomic components")
+    category: CategoryEnum = Field(..., description="The category of the atomic string, can either be 'required' or 'additional'")
+
+class ClassifiedObject(BaseModel):
+    requirement_string: str = Field(..., description="The provided requirement string")
+    classification: ClassificationEnum = Field(..., description="The classification of the atomic string, can either be 'required_qualification', 'additional_qualification', or 'evaluated_qualification'")
+
+class AssessedObject(BaseModel):
+    requirement_string: str = Field(..., description="The atomic string requirement to be assessed against the candidate profile")
+    match_reasoning: str = Field(..., description="The reasoning behind the match decision")
+    match: bool = Field(..., description="Boolean indicating if the requirement matches the candidate profile")
+
+class ResponseData_2_1(BaseModel):
+    tagged_list: List[TaggedList] = Field(..., description="A list of tagged qualifications/skills extracted from the job description.")
+
+class ResponseData_2_2(BaseModel):
+    atomic_objects: List[AtomicObject] = Field(..., description="A list of atomic objects.")
+
+class ResponseData_2_3(BaseModel):
+    classified_objects: List[ClassifiedObject] = Field(..., description="A list of classified objects.")
+
+class ResponseData_3_1(BaseModel):
+    assessed_objects: List[AssessedObject] = Field(..., description="A list of assessed objects with match reasoning and boolean match.")
+
+url = "https://openrouter.ai/api/v1/chat/completions"
+headers = {
+    "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+    "Content-Type": "application/json"
+}
+
+async def fetch_response(
+    content: str, 
+    system_instructions: str, 
+    model: str, 
+    temperature: float, 
+    response_schema: Type[BaseModel], 
+    max_reasoning_tokens: Optional[int] = 2000,
+    examples: Optional[List[dict]] = None):
+
+    # logger.info(f"Fetching response from OpenRouter for model {model} with temperature {temperature} and max reasoning tokens {max_reasoning_tokens}")
+
+    messages = [{"role": "system", "content": system_instructions}]
+    if examples:
+        messages.extend(examples)
+    messages.append({"role": "user", "content": content})
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "reasoning": {
+            "effort": "low"
+            # "max_tokens": max_reasoning_tokens,
+            # "exclude": False
+        },
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": response_schema.model_json_schema(),
+        },
+        "provider": {
+            "order": ["deepinfra/fp4","nebius/fp4","fireworks"],
+            "allow_fallbacks": False,
+            "require_parameters": True
+        },
+        "usage": {
+            "include": True
+        },
+        "temperature": temperature
     }
-)
 
-response_schema_2_2 = Schema(
-    type = Type.OBJECT,
-    required = ["atomic_objects"],
-    properties = {
-        "atomic_objects": Schema(
-            type = Type.ARRAY,
-            items = Schema(
-                type = Type.OBJECT,
-                required = ["2A_atomic_string", "2B_category"],
-                properties = {
-                    "2A_atomic_string": Schema(
-                        type = Type.STRING,
-                    ),
-                    "2B_category": Schema(
-                        type = Type.STRING,
-                        enum = ["required", "additional"],
-                    ),
-                },
-                property_ordering=[
-                    "2A_atomic_string",
-                    "2B_category",
-                ]
-            ),
-        ),
-    },
-)
-
-response_schema_2_3 = Schema(
-    type = Type.OBJECT,
-    required = ["classification"],
-    properties = {
-        "classification": Schema(
-            type = Type.STRING,
-            enum = ["required_qualification", "additional_qualification", "evaluated_qualification"],
-        ),
-    }
-)
-
-response_schema_3_1 = Schema(
-            type = Type.OBJECT,
-            required = ["A_match_reasoning", "B_match"],
-            properties = {
-                "A_match_reasoning": Schema(
-                    type = Type.STRING,
-                ),
-                "B_match": Schema(
-                    type = Type.BOOLEAN,
-                ),
-            },
-            property_ordering=[
-                "A_match_reasoning",
-                "B_match",
-            ]
-        )
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            text = response.json()['choices'][0]['message']['content']
+            try:
+                response_schema.model_validate_json(text)
+                return response.json()
+            except ValueError as ve:
+                logger.exception(f"Response content: {text}")
+                raise ValueError(f"Response validation error: {ve}")
+        except httpx.HTTPStatusError as e:
+            logger.exception(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+            raise e
 
 async def generate(
         content: str, 
@@ -118,36 +136,40 @@ async def generate(
         model:str, 
         temperature: float, 
         response_schema,
-        thinking_config,
         job_id: str,
         llm_run_system_prompt_id: str,
         llm_run_type: str,
-        max_output_tokens: Optional[int] = 2000
+        max_thinking: Optional[int] = 2000,
+        examples: Optional[List[dict]] = None
         ):
     llm_run_id = str(uuid.uuid4())
     
     try:
         time_start = time.time()
-        response = await client.aio.models.generate_content(
+        response = await fetch_response(
+            content=content,
+            system_instructions=system_instructions,
             model=model,
-            contents=content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instructions,
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                temperature=temperature,
-                thinking_config=thinking_config,
-                max_output_tokens=max_output_tokens
-            )
+            temperature=temperature,
+            response_schema=response_schema,
+            max_reasoning_tokens=max_thinking,
+            examples=examples
         )
         time_end = time.time()
-        # logger.info(f"Completed {llm_run_type} generation for job {job_id} with model {model}.")
-        thoughts_token_count = getattr(response.usage_metadata, "thoughts_token_count", 0) or 0
-        # logger.info(f"Input:{response.usage_metadata.prompt_token_count}, Output:{response.usage_metadata.candidates_token_count + thoughts_token_count}")  # type: ignore
-        if not response.parsed:
-            llm_run_output = str(response.text)
-        else:
-            llm_run_output = str(response.parsed)
+        
+        # Extract response data
+        message_content = response['choices'][0]['message']['content']
+        parsed_data = json.loads(message_content)
+        
+        # Extract token counts
+        usage = response['usage']
+        input_tokens = usage['prompt_tokens']
+        output_tokens = usage['completion_tokens']
+        reasoning_tokens = usage.get('completion_tokens_details', {}).get('reasoning_tokens', 0) or 0
+        total_tokens = usage['total_tokens']
+        
+        llm_run_output = str(parsed_data)
+        
         await upsert_llm_run_v2(
             llm_run_id=llm_run_id,
             job_id=job_id,
@@ -156,21 +178,22 @@ async def generate(
             llm_run_system_prompt_id=llm_run_system_prompt_id,
             llm_run_input=content,
             llm_run_output=llm_run_output,
-            llm_run_input_tokens=response.usage_metadata.prompt_token_count,  # type: ignore
-            llm_run_output_tokens=response.usage_metadata.candidates_token_count,  # type: ignore
-            llm_run_thinking_tokens=thoughts_token_count,  # type: ignore
-            llm_run_total_tokens=response.usage_metadata.total_token_count,  # type: ignore
+            llm_run_input_tokens=input_tokens,
+            llm_run_output_tokens=output_tokens,
+            llm_run_thinking_tokens=reasoning_tokens,
+            llm_run_total_tokens=total_tokens,
             llm_run_start=time_start,
             llm_run_end=time_end,
         )
+        
         return {
-            "data": response.parsed,
+            "data": parsed_data,
             "tokens": {
                 "model": model,
-                "input_tokens": response.usage_metadata.prompt_token_count,  # type: ignore
-                "output_tokens": response.usage_metadata.candidates_token_count,  # type: ignore
-                "thinking_tokens": thoughts_token_count,
-                "total_tokens": response.usage_metadata.total_token_count,  # type: ignore
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "thinking_tokens": reasoning_tokens,
+                "total_tokens": total_tokens,
             }
         }
     except Exception as e:
@@ -207,11 +230,12 @@ async def process_single_job_assessment(
                 system_instructions=prompt_configuration_2_1['prompt_system_prompt'],
                 model=prompt_configuration_2_1['model_id'],
                 temperature=prompt_configuration_2_1['prompt_temperature'],
-                response_schema=response_schema_2_1,
-                thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_2_1['prompt_thinking_budget']),
+                response_schema=ResponseData_2_1,
+                max_thinking=prompt_configuration_2_1['prompt_thinking_budget'],
                 job_id=job['job_id'],
                 llm_run_system_prompt_id=prompt_configuration_2_1['prompt_id'],
-                llm_run_type=prompt_configuration_2_1['llm_run_type']
+                llm_run_type=prompt_configuration_2_1['llm_run_type'],
+                examples=LLMExamples.example_2_1
             )
             # Track token usage
             model_name = result_2_1['tokens']['model']
@@ -239,12 +263,12 @@ async def process_single_job_assessment(
                 system_instructions=prompt_configuration_2_2['prompt_system_prompt'],
                 model=prompt_configuration_2_2['model_id'],
                 temperature=prompt_configuration_2_2['prompt_temperature'],
-                response_schema=response_schema_2_2,
-                thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_2_2['prompt_thinking_budget']),
+                response_schema=ResponseData_2_2,
+                max_thinking=prompt_configuration_2_2['prompt_thinking_budget'],
                 job_id=job['job_id'],
                 llm_run_system_prompt_id=prompt_configuration_2_2['prompt_id'],
                 llm_run_type=prompt_configuration_2_2['llm_run_type'],
-                max_output_tokens=4000
+                examples=LLMExamples.example_2_2
             )
             # Track token usage
             model_name = result_2_2['tokens']['model']
@@ -263,42 +287,40 @@ async def process_single_job_assessment(
             )
             return False
 
-        # Step 2.3: Final classification for each atomic object
-        final_classifications = []
-        for item in result_2_2['data']['atomic_objects']:  # type: ignore
-            content_2_3_template = Template(prompt_configuration_2_3['prompt_template'])
-            content_2_3 = content_2_3_template.render(
-                atomic_string=str(item['2A_atomic_string']),
-                category=str(item['2B_category'])
+        # Step 2.3: Final classification for all atomic objects at once
+        content_2_3_template = Template(prompt_configuration_2_3['prompt_template'])
+        content_2_3 = content_2_3_template.render(atomic_objects=result_2_2['data']['atomic_objects'])  # type: ignore
+        try:
+            result_2_3 = await generate(
+                content=content_2_3,
+                system_instructions=prompt_configuration_2_3['prompt_system_prompt'],
+                model=prompt_configuration_2_3['model_id'],
+                temperature=prompt_configuration_2_3['prompt_temperature'],
+                response_schema=ResponseData_2_3,
+                max_thinking=prompt_configuration_2_3['prompt_thinking_budget'],
+                job_id=job['job_id'],
+                llm_run_system_prompt_id=prompt_configuration_2_3['prompt_id'],
+                llm_run_type=prompt_configuration_2_3['llm_run_type'],
+                examples=LLMExamples.example_2_3
             )
-            try:
-                result_2_3 = await generate(
-                    content=content_2_3,
-                    system_instructions=prompt_configuration_2_3['prompt_system_prompt'],
-                    model=prompt_configuration_2_3['model_id'],
-                    temperature=prompt_configuration_2_3['prompt_temperature'],
-                    response_schema=response_schema_2_3,
-                    thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_2_3['prompt_thinking_budget']),
-                    job_id=job['job_id'],
-                    llm_run_system_prompt_id=prompt_configuration_2_3['prompt_id'],
-                    llm_run_type=prompt_configuration_2_3['llm_run_type']
-                )
-                # Track token usage
-                model_name = result_2_3['tokens']['model']
-                if model_name not in token_details_by_model:
-                    token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-                token_details_by_model[model_name]['input'] += result_2_3['tokens']['input_tokens']
-                token_details_by_model[model_name]['output'] += result_2_3['tokens']['output_tokens']
-                token_details_by_model[model_name]['thinking'] += result_2_3['tokens']['thinking_tokens']
-                
+            # Track token usage
+            model_name = result_2_3['tokens']['model']
+            if model_name not in token_details_by_model:
+                token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
+            token_details_by_model[model_name]['input'] += result_2_3['tokens']['input_tokens']
+            token_details_by_model[model_name]['output'] += result_2_3['tokens']['output_tokens']
+            token_details_by_model[model_name]['thinking'] += result_2_3['tokens']['thinking_tokens']
+            
+            # Extract final classifications from the response
+            final_classifications = []
+            for classified_obj in result_2_3['data']['classified_objects']:  # type: ignore
                 final_classifications.append({
-                    "atomic_string": item['2A_atomic_string'],  # type: ignore
-                    "classification": result_2_3['data']['classification']  # type: ignore
+                    "requirement_string": classified_obj['requirement_string'],
+                    "classification": classified_obj['classification']
                 })
-            except Exception as e:
-                logger.exception(f"Error generating final classification for job {job['job_id']}: {e}")
-                has_errors = True
-                break
+        except Exception as e:
+            logger.exception(f"Error generating final classification for job {job['job_id']}: {e}")
+            has_errors = True
 
         if has_errors:
             await upsert_job_quarantine(
@@ -309,13 +331,14 @@ async def process_single_job_assessment(
             )
             return False
 
-        # Step 3.1: Assessment for each filtered item
+        # Step 3.1: Assessment for all filtered items at once
         filtered_items = [item for item in final_classifications if item['classification'] != 'evaluated_qualification' and item['classification'] is not None and item['classification'] != '']
-        for item in filtered_items:
+        
+        if filtered_items:  # Only proceed if there are items to assess
             content_3_1_template = Template(prompt_configuration_3_1['prompt_template'])
             content_3_1 = content_3_1_template.render(
                 candidate_profile=resume['document_markdown'],
-                requirement_string=item['atomic_string'],  # type: ignore
+                requirement_strings=filtered_items  # Pass the whole list
             )
             
             # Retry logic for step 3.1 with validation
@@ -330,16 +353,19 @@ async def process_single_job_assessment(
                         system_instructions=prompt_configuration_3_1['prompt_system_prompt'],
                         model=prompt_configuration_3_1['model_id'],
                         temperature=prompt_configuration_3_1['prompt_temperature'],
-                        response_schema=response_schema_3_1,
-                        thinking_config=types.ThinkingConfig(thinking_budget=prompt_configuration_3_1['prompt_thinking_budget']),
+                        response_schema=ResponseData_3_1,
+                        max_thinking=prompt_configuration_3_1['prompt_thinking_budget'],
                         job_id=job['job_id'],
                         llm_run_system_prompt_id=prompt_configuration_3_1['prompt_id'],
-                        llm_run_type=prompt_configuration_3_1['llm_run_type']
+                        llm_run_type=prompt_configuration_3_1['llm_run_type'],
+                        examples=LLMExamples.example_3_1
                     )
                     
-                    # Validate the result
-                    if (result_3_1['data']['A_match_reasoning'] is None or 
-                        result_3_1['data']['B_match'] is None):
+                    # Validate the result - check if we have assessments for all filtered items
+                    assessed_objects = result_3_1['data']['assessed_objects']  # type: ignore
+                    if (not assessed_objects or 
+                        len(assessed_objects) != len(filtered_items) or
+                        any(obj['match_reasoning'] is None or obj['match'] is None for obj in assessed_objects)):
                         if retry_count < max_retries:
                             retry_count += 1
                             logger.warning(f"Invalid result for job {job['job_id']}, retry {retry_count}/{max_retries}")
@@ -357,8 +383,12 @@ async def process_single_job_assessment(
                     token_details_by_model[model_name]['output'] += result_3_1['tokens']['output_tokens']
                     token_details_by_model[model_name]['thinking'] += result_3_1['tokens']['thinking_tokens']
                     
-                    item['match_reasoning'] = result_3_1['data']['A_match_reasoning']  # type: ignore
-                    item['match'] = result_3_1['data']['B_match']  # type: ignore
+                    # Map assessment results back to filtered_items
+                    for i, assessed_obj in enumerate(assessed_objects):
+                        if i < len(filtered_items):
+                            filtered_items[i]['match_reasoning'] = assessed_obj['match_reasoning']
+                            filtered_items[i]['match'] = assessed_obj['match']
+                    
                     break  # Success, exit retry loop
                     
                 except Exception as e:
@@ -370,9 +400,6 @@ async def process_single_job_assessment(
                         logger.exception(f"Error generating assessment for job {job['job_id']} after {max_retries} retries: {e}")
                         has_errors = True
                         break
-            
-            if has_errors:
-                break
 
         if has_errors:
             await upsert_job_quarantine(
@@ -388,14 +415,14 @@ async def process_single_job_assessment(
         for item in final_classifications:
             # Check if this item was processed for matching (in filtered_items)
             match_data = next((filtered_item for filtered_item in filtered_items 
-                             if filtered_item['atomic_string'] == item['atomic_string']), None)
+                             if filtered_item['requirement_string'] == item['requirement_string']), None)
             
             if match_data:
                 # Item was processed for matching, use the match data
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
-                    job_skills_atomic_string=item['atomic_string'],  
+                    job_skills_atomic_string=item['requirement_string'],  
                     job_skills_type=item['classification'],  
                     job_skills_match=match_data['match'],  
                     job_skills_match_reasoning=match_data['match_reasoning'],
@@ -406,7 +433,7 @@ async def process_single_job_assessment(
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
-                    job_skills_atomic_string=item['atomic_string'],  
+                    job_skills_atomic_string=item['requirement_string'],  
                     job_skills_type=item['classification'],  
                     job_skills_match=None,  
                     job_skills_match_reasoning=None,
@@ -430,15 +457,15 @@ async def generate_job_assessment(limit:int=100, days_back:int=14, semaphore_cou
         logger.error("Master resume not found.")
         return {"error": "Master resume not found"}
 
-    prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_jobdesc_tagging")
+    prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_assessment")
     if prompt_configuration_2_1 is None:
         logger.error("Prompt configuration for job description tagging not found.")
         return {"error": "Prompt configuration for job description tagging not found"}
-    prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_jobdesc_atomizing")
+    prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_assessment")
     if prompt_configuration_2_2 is None:
         logger.error("Prompt configuration for job description atomizing not found.")
         return {"error": "Prompt configuration for job description atomizing not found"}
-    prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_jobdesc_final")
+    prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_assessment")
     if prompt_configuration_2_3 is None:
         logger.error("Prompt configuration for job description final processing not found.")
         return {"error": "Prompt configuration for job description final processing not found"}
@@ -500,15 +527,15 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
         logger.error("Master resume not found.")
         return {"error": "Master resume not found"}
 
-    prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_jobdesc_tagging")
+    prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_assessment")
     if prompt_configuration_2_1 is None:
         logger.error("Prompt configuration for job description tagging not found.")
         return {"error": "Prompt configuration for job description tagging not found"}
-    prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_jobdesc_atomizing")
+    prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_assessment")
     if prompt_configuration_2_2 is None:
         logger.error("Prompt configuration for job description atomizing not found.")
         return {"error": "Prompt configuration for job description atomizing not found"}
-    prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_jobdesc_final")
+    prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_assessment")
     if prompt_configuration_2_3 is None:
         logger.error("Prompt configuration for job description final processing not found.")
         return {"error": "Prompt configuration for job description final processing not found"}
