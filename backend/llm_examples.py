@@ -66,7 +66,7 @@ OUR PURPOSE & VALUES: Everything we do is about caring for our patients, our mem
     },
     {
       "raw_string": "Epic Healthy Planet/ Compass Rose",
-      "category": "additional",
+      "category": "additional"
     },
     {
       "raw_string": "SQL",
