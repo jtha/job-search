@@ -782,6 +782,46 @@ async def get_recent_assessed_jobs(days_back: int = 5, limit: int = 200) -> list
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+async def get_recent_job_skills(days_back: int = 5, limit: int = 200) -> list[dict]:
+    """
+    Returns job_skills rows for jobs that have been assessed in the last `days_back` days.
+    The set of job_ids considered is limited to the most recently assessed jobs (same logic as get_recent_assessed_jobs),
+    capped by `limit`. All job_skills rows for those job_ids are returned.
+    """
+    db = await get_db()
+    async with db.execute(
+        """
+        WITH latest_assessment AS (
+            SELECT
+                job_id,
+                MAX(CAST(llm_run_end AS INTEGER)) AS assessment_time
+            FROM llm_runs_v2
+            WHERE llm_run_end IS NOT NULL
+            GROUP BY job_id
+        ),
+        cutoff AS (
+            SELECT CAST(strftime('%s','now') AS INTEGER) - (? * 86400) AS since_ts
+        ),
+        recent_jobs AS (
+            SELECT la.job_id
+            FROM latest_assessment la
+            INNER JOIN job_skills js ON js.job_id = la.job_id
+            CROSS JOIN cutoff c
+            WHERE la.assessment_time >= c.since_ts
+            GROUP BY la.job_id
+            ORDER BY la.assessment_time DESC
+            LIMIT ?
+        )
+        SELECT js.*
+        FROM job_skills js
+        INNER JOIN recent_jobs r ON r.job_id = js.job_id
+        ORDER BY js.job_id
+        """,
+        (days_back, limit),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
 async def get_quarantined_job_details_for_assessment(limit:int=100, days_back:int=14) -> list[dict]:
     """
     Returns a list of job_details for quarantined jobs where job_skills assessment is still needed.
