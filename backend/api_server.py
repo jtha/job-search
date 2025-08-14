@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import uuid
+import json
 
 from fastapi import FastAPI, Body, HTTPException, Query
 from pydantic import BaseModel
@@ -13,6 +14,10 @@ from .db import (
     upsert_llm_model,
     upsert_job_quarantine,
     upsert_prompt,
+    update_job_applied,
+    clear_job_applied,
+    delete_job_skills_by_job_id,
+    get_job_detail_by_id,
     get_job_runs,
     get_job_details,
     get_document_store,
@@ -24,12 +29,17 @@ from .db import (
     get_job_details_without_assessment,
     get_job_skills,
     get_prompts,
-    get_llm_runs_v2
+    get_llm_runs_v2,
+    get_recent_assessed_jobs
 )
 
-from .crawler import scrape_linkedin_multi_page
+from .crawler import scrape_linkedin_multi_page, manual_extract
 from .utilities import setup_logging, get_logger
-from .llm import generate_job_assessment, generate_failed_job_assessment
+from .llm import (
+    generate_job_assessment, 
+    generate_failed_job_assessment,
+    generate_job_assessment_with_id
+)
 # from .db_sync import main as sync_main
 
 # Pydantic Models
@@ -43,6 +53,9 @@ class JobDetailsWithoutAssessmentRequest(BaseModel):
     days_back: int = 14
 
 # --- Pydantic Models for Upserts ---
+
+class RegenerateJobAssessmentRequest(BaseModel):
+    job_id: str
 
 class DocumentUpsertRequest(BaseModel):
     document_id: str
@@ -68,6 +81,13 @@ class PromptUpsertRequest(BaseModel):
     prompt_response_schema: str | None = None
     prompt_created_at: int | None = None
     prompt_thinking_budget: int | None = None
+
+class HtmlPayload(BaseModel):
+    html: str
+    url: str
+
+class UpdateJobAppliedRequest(BaseModel):
+    job_id: str
 
 # Initialization
 
@@ -158,7 +178,61 @@ async def get_prompts_endpoint():
 async def get_llm_runs_v2_endpoint():
     return await get_llm_runs_v2()
 
+# --- Recent assessed jobs endpoint ---
+@app.get("/jobs_recent", response_model=list[dict])
+async def get_jobs_recent_endpoint(
+    days_back: int = Query(5, gt=0, description="Days back to consider an assessment recent."),
+    limit: int = Query(300, gt=0, description="Maximum number of jobs to return.")
+):
+    return await get_recent_assessed_jobs(days_back=days_back, limit=limit)
+
 # --- Endpoint to run LinkedIn scrape and upsert results ---
+
+@app.post("/update_job_applied")
+async def update_job_applied_endpoint(payload: UpdateJobAppliedRequest = Body(...)):
+    """
+    Marks a job as applied by setting job_applied=1 and job_applied_timestamp to now for the given job_id.
+    """
+    try:
+        job_id = payload.job_id
+        # Ensure job exists
+        job = await get_job_detail_by_id(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"job_id not found: {job_id}")
+
+        affected = await update_job_applied(job_id)
+        if affected == 0:
+            # This should be rare since we already checked existence
+            raise HTTPException(status_code=404, detail=f"No rows updated for job_id: {job_id}")
+
+        return {"status": "success", "job_id": job_id, "job_applied": 1}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update job_applied for {payload.job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update job_applied.")
+
+@app.post("/update_job_unapplied")
+async def update_job_unapplied_endpoint(payload: UpdateJobAppliedRequest = Body(...)):
+    """
+    Reverts a job to unapplied by setting job_applied=0 and job_applied_timestamp=NULL for the given job_id.
+    """
+    try:
+        job_id = payload.job_id
+        job = await get_job_detail_by_id(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"job_id not found: {job_id}")
+
+        affected = await clear_job_applied(job_id)
+        if affected == 0:
+            raise HTTPException(status_code=404, detail=f"No rows updated for job_id: {job_id}")
+
+        return {"status": "success", "job_id": job_id, "job_applied": 0}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update job_unapplied for {payload.job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update job_unapplied.")
 
 @app.post("/scrape_linkedin_multi_page")
 async def scrape_linkedin_multi_page_endpoint(payload: LinkedInScrapeRequest = Body(...)):
@@ -375,25 +449,113 @@ async def upsert_prompt_endpoint(payload: PromptUpsertRequest):
     except Exception as e:
         logger.error(f"Failed to upsert prompt: {e}")
         raise HTTPException(status_code=500, detail="Failed to upsert prompt.")
+
+
+@app.post("/html_extract")
+async def html_extract_endpoint(payload: HtmlPayload):
+    """
+    Extracts text from HTML content and returns it if it meets the minimum length requirement.
+    """
+    logger.info("Received HTML content for extraction.")
+
+    html_content = payload.html
+    request_url = payload.url
+    try:
+        extracted_data = await manual_extract(html_content, request_url)
+        logger.info(f"Successfully extracted content for job id: {extracted_data['job_id']}")
+        if extracted_data.get("job_id") is not None:
+            await upsert_job_detail(
+                job_id=extracted_data.get("job_id"),  # type: ignore
+                job_title=extracted_data.get("job_title"),
+                job_company=extracted_data.get("job_company"),
+                job_location=extracted_data.get("job_location"),
+                job_salary=extracted_data.get("job_salary"),
+                job_url=extracted_data.get("job_url"),
+                job_url_direct=extracted_data.get("job_url_direct"),
+                job_description=extracted_data.get("job_description"),
+                job_applied=0,
+                job_applied_timestamp=None
+            )
+            job_skills = await generate_job_assessment_with_id(extracted_data.get("job_id")) # type: ignore
+            extracted_data["required_qualifications"] = [
+                {
+                    "requirement":i['job_skills_atomic_string'],  # type: ignore
+                    "match":i['job_skills_match'],  # type: ignore
+                    "match_reason":i['job_skills_match_reasoning'] # type: ignore
+                } for i in job_skills if i.get("job_skills_type")=="required_qualification"] # type: ignore
+            extracted_data["additional_qualifications"] = [
+                {
+                    "requirement":i['job_skills_atomic_string'],  # type: ignore
+                    "match":i['job_skills_match'],  # type: ignore
+                    "match_reason":i['job_skills_match_reasoning'] # type: ignore
+                } for i in job_skills if i.get("job_skills_type")=="additional_qualification"] # type: ignore
+            extracted_data["evaluated_qualifications"] = [
+                {
+                    "requirement":i['job_skills_atomic_string']  # type: ignore
+                } for i in job_skills if i.get("job_skills_type")=="evaluated_qualification"] # type: ignore            
+        return {"status": "success", "data": extracted_data}
+    except Exception as e:
+        logger.exception("Failed to extract HTML content.")
+        return {"status": "error", "message": "Failed to extract HTML content."}
     
+# --- Endpoint to delete and regenerate job assessment for a specific job_id ---
+@app.post("/regenerate_job_assessment")
+async def regenerate_job_assessment_endpoint(payload: RegenerateJobAssessmentRequest = Body(...)):
+    """
+    Deletes existing job_skills for the given job_id and regenerates the assessment.
+    Output matches /html_extract: { status, data: { ...job fields..., required_qualifications, additional_qualifications, evaluated_qualifications } }
+    """
+    try:
+        job_id = payload.job_id
+        logger.info(f"Regenerating job assessment for job_id: {job_id}")
 
-# --- Endpoint to trigger BigQuery sync ---
-# @app.post("/sync_to_bigquery")
-# async def sync_to_bigquery_endpoint():
-#     """
-#     Triggers the complete BigQuery sync process for all tables.
-#     This will sync data from the local SQLite database to BigQuery using the Storage Write API.
-#     """
-#     try:
-#         logger.info("Starting BigQuery sync process via API endpoint.")
+        # Ensure job exists
+        job = await get_job_detail_by_id(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"job_id not found: {job_id}")
 
-#         sync_main()
-        
-#         logger.info("BigQuery sync process completed successfully.")
-#         return {
-#             "status": "success",
-#             "message": "BigQuery sync completed successfully.",
-#         }
-#     except Exception as e:
-#         logger.error(f"Failed to complete BigQuery sync: {e}", exc_info=True)
-#         raise HTTPException(status_code=500, detail=f"BigQuery sync failed: {e}")
+        # 1) Delete prior job_skills entries
+        await delete_job_skills_by_job_id(job_id)
+
+        # 2) Re-run assessment generation, which will repopulate job_skills
+        job_skills = await generate_job_assessment_with_id(job_id)
+
+        # Build output mirroring html_extract_endpoint
+        extracted_data = {
+            "job_id": job.get("job_id"),
+            "job_title": job.get("job_title"),
+            "job_company": job.get("job_company"),
+            "job_location": job.get("job_location"),
+            "job_salary": job.get("job_salary"),
+            "job_url": job.get("job_url"),
+            "job_url_direct": job.get("job_url_direct"),
+            "job_description": job.get("job_description"),
+        }
+
+        # Same mapping used in html_extract
+        extracted_data["required_qualifications"] = [
+            {
+                "requirement": i['job_skills_atomic_string'],  # type: ignore
+                "match": i['job_skills_match'],  # type: ignore
+                "match_reason": i['job_skills_match_reasoning']  # type: ignore
+            } for i in (job_skills or []) if i.get("job_skills_type") == "required_qualification"]  # type: ignore
+        extracted_data["additional_qualifications"] = [
+            {
+                "requirement": i['job_skills_atomic_string'],  # type: ignore
+                "match": i['job_skills_match'],  # type: ignore
+                "match_reason": i['job_skills_match_reasoning']  # type: ignore
+            } for i in (job_skills or []) if i.get("job_skills_type") == "additional_qualification"]  # type: ignore
+        extracted_data["evaluated_qualifications"] = [
+            {
+                "requirement": i['job_skills_atomic_string']  # type: ignore
+            } for i in (job_skills or []) if i.get("job_skills_type") == "evaluated_qualification"]  # type: ignore
+
+        return {"status": "success", "data": extracted_data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to regenerate job assessment for job_id {payload.job_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate job assessment: {e}")

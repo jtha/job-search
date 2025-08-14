@@ -15,13 +15,16 @@ from pydantic import BaseModel, Field
 from .utilities import setup_logging, get_logger
 from .db import (
     get_document_master_resume,
+    get_document_master_resume_json,
     upsert_job_quarantine,
     get_latest_prompt,
+    get_job_details,
     get_job_details_without_assessment,
     get_quarantined_job_details_for_assessment,
     upsert_llm_run_v2,
     upsert_job_skills,
-    delete_job_quarantine
+    delete_job_quarantine,
+    get_job_skills_for_job
 )
 from .llm_examples import LLMExamples
 
@@ -201,6 +204,7 @@ async def generate(
 async def process_single_job_assessment(
     job: dict, 
     resume: dict,
+    resume_json: dict,
     prompt_configuration_2_1: dict,
     prompt_configuration_2_2: dict, 
     prompt_configuration_2_3: dict,
@@ -335,7 +339,8 @@ async def process_single_job_assessment(
         if filtered_items:  # Only proceed if there are items to assess
             content_3_1_template = Template(prompt_configuration_3_1['prompt_template'])
             content_3_1 = content_3_1_template.render(
-                candidate_profile=resume['document_markdown'],
+                candidate_profile=resume_json['document_markdown'],
+                resume_text=resume['document_markdown'],
                 requirement_strings=filtered_items  # Pass the whole list
             )
             
@@ -450,7 +455,13 @@ async def process_single_job_assessment(
 
 async def generate_job_assessment(limit:int=100, days_back:int=14, semaphore_count:int=5):
 
+    resume_json = await get_document_master_resume_json()
     resume = await get_document_master_resume()
+
+    if resume_json["document_markdown"] is None:
+        logger.error("Master resume not found.")
+        return {"error": "Master resume not found"}
+
     if resume["document_markdown"] is None:
         logger.error("Master resume not found.")
         return {"error": "Master resume not found"}
@@ -487,6 +498,7 @@ async def generate_job_assessment(limit:int=100, days_back:int=14, semaphore_cou
         process_single_job_assessment(
             job=job,
             resume=resume,
+            resume_json=resume_json,
             prompt_configuration_2_1=prompt_configuration_2_1,
             prompt_configuration_2_2=prompt_configuration_2_2,
             prompt_configuration_2_3=prompt_configuration_2_3,
@@ -520,7 +532,13 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
     Generates job assessments for quarantined jobs that failed previously.
     Uses the same logic as generate_job_assessment but filters for quarantined jobs.
     """
+    resume_json = await get_document_master_resume_json()
     resume = await get_document_master_resume()
+
+    if resume_json["document_markdown"] is None:
+        logger.error("Master resume not found.")
+        return {"error": "Master resume not found"}
+
     if resume["document_markdown"] is None:
         logger.error("Master resume not found.")
         return {"error": "Master resume not found"}
@@ -557,6 +575,7 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
         (job, process_single_job_assessment(
             job=job,
             resume=resume,
+            resume_json=resume_json,
             prompt_configuration_2_1=prompt_configuration_2_1,
             prompt_configuration_2_2=prompt_configuration_2_2,
             prompt_configuration_2_3=prompt_configuration_2_3,
@@ -598,3 +617,94 @@ async def generate_failed_job_assessment(limit:int=100, days_back:int=14, semaph
         "exceptions": exception_count,
         "quarantine_removed": len(successful_jobs)
     }
+
+
+async def generate_job_assessment_with_id(job_id: str):
+    """
+    Generate job assessment for a specific job_id if not yet performed.
+    - If job_skills already exist for the job_id, return them immediately.
+    - Otherwise, run the same pipeline used in generate_job_assessment for that single job,
+      then return the resulting job_skills for the job_id.
+    """
+    # Check if assessment already exists
+    try:
+        existing = await get_job_skills_for_job(job_id)
+    except Exception as e:
+        logger.exception(f"Failed to query existing job skills for job_id {job_id}: {e}")
+        return {"error": f"Failed to query existing job skills for job_id {job_id}"}
+
+    if existing:
+        return existing
+
+    # Fetch the job details for the specific job_id
+    try:
+        all_jobs = await get_job_details()
+        job = next((j for j in all_jobs if j.get("job_id") == job_id), None)
+    except Exception as e:
+        logger.exception(f"Failed to load job details for job_id {job_id}: {e}")
+        return {"error": f"Failed to load job details for job_id {job_id}"}
+
+    if not job:
+        return {"error": f"job_id {job_id} not found in job_details"}
+    if not job.get("job_description"):
+        return {"error": f"job_id {job_id} has no job_description"}
+
+    # Load resume and prompts similar to generate_job_assessment
+    resume_json = await get_document_master_resume_json()
+    resume = await get_document_master_resume()
+
+    if resume_json["document_markdown"] is None:
+        logger.error("Master resume not found.")
+        return {"error": "Master resume not found"}
+
+    if resume["document_markdown"] is None:
+        logger.error("Master resume not found.")
+        return {"error": "Master resume not found"}
+
+    prompt_configuration_2_1 = await get_latest_prompt("ja_2_1_assessment")
+    if prompt_configuration_2_1 is None:
+        logger.error("Prompt configuration for job description tagging not found.")
+        return {"error": "Prompt configuration for job description tagging not found"}
+    prompt_configuration_2_2 = await get_latest_prompt("ja_2_2_assessment")
+    if prompt_configuration_2_2 is None:
+        logger.error("Prompt configuration for job description atomizing not found.")
+        return {"error": "Prompt configuration for job description atomizing not found"}
+    prompt_configuration_2_3 = await get_latest_prompt("ja_2_3_assessment")
+    if prompt_configuration_2_3 is None:
+        logger.error("Prompt configuration for job description final processing not found.")
+        return {"error": "Prompt configuration for job description final processing not found"}
+    prompt_configuration_3_1 = await get_latest_prompt("ja_3_1_assessment")
+    if prompt_configuration_3_1 is None:
+        logger.error("Prompt configuration for job assessment not found.")
+        return {"error": "Prompt configuration for job assessment not found"}
+
+    # Process the single job with semaphore of 1
+    semaphore = asyncio.Semaphore(1)
+    try:
+        success = await process_single_job_assessment(
+            job={"job_id": job_id, "job_description": job["job_description"]},
+            resume=resume,
+            resume_json=resume_json,
+            prompt_configuration_2_1=prompt_configuration_2_1,
+            prompt_configuration_2_2=prompt_configuration_2_2,
+            prompt_configuration_2_3=prompt_configuration_2_3,
+            prompt_configuration_3_1=prompt_configuration_3_1,
+            semaphore=semaphore,
+        )
+    except Exception as e:
+        logger.exception(f"Exception while processing assessment for job_id {job_id}: {e}")
+        return {"error": f"Failed to generate assessment for job_id {job_id}"}
+
+    if not success:
+        # Return empty skills to indicate no data created (or user can inspect quarantine)
+        return []
+
+    # Fetch and return the newly created job skills
+    try:
+        return await get_job_skills_for_job(job_id)
+    except Exception as e:
+        logger.exception(f"Failed to load generated job skills for job_id {job_id}: {e}")
+        return {"error": f"Generated assessment but failed to load job skills for job_id {job_id}"}
+
+
+

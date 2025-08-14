@@ -84,11 +84,10 @@ University of British Columbia | Vancouver, BC | Sep 2006 to May 2012
 ---
 
 ### Skills 
-• **Business Intelligence & Analytics:** SQL, Python, BigQuery, Metabase, Looker Studio, Microsoft Power BI, Data Modeling, Reporting & Dashboarding  
-• **Supply Chain & Operations:** Demand Planning, Supply Planning, Manpower Planning, Process Optimization & Automation, ERP Systems (SAP), Integrated Business Planning (IBP)  
-• **Leadership & Strategy:** Stakeholder Management, Cross-Functional Collaboration, Cost Reduction, Project Management  
-• **Productivity Tools:** Excel & Google Sheet (Advanced)    
-• **AI Tools:** Cursor, GitHub Copilot  
+• **Business Intelligence & Analytics:** SQL (7 years), Python (2 years), BigQuery (5 years), Metabase (5 years), Looker Studio (5 years), Microsoft Power BI (1 year), Data Modeling (5 years), Reporting & Dashboarding (7 years)  
+• **Supply Chain & Operations:** Demand Planning (3 years), Supply Planning (3 years), Manpower Planning (2 years), Process Optimization & Automation (9 years), ERP Systems (SAP) (2 years), Integrated Business Planning (IBP) (3 years)  
+• **Leadership & Strategy:** Stakeholder Management (7 years), Cross-Functional Collaboration (7 years), Cost Reduction (7 years), Project Management (3 years)  
+• **AI Tools:** Cursor (1 year), GitHub Copilot (1 year)  
 
 ---
 

@@ -91,7 +91,7 @@ async def upsert_job_detail(
         (job_id, job_title, job_company, job_location, job_salary, job_url, job_url_direct, job_description, job_applied, job_applied_timestamp)
     )
     await db.commit()
-    # logger.info(f"Inserted job_detail (if not exists): {job_id}")
+    logger.info(f"Inserted job_detail (if not exists): {job_id}")
 
 # Insert new function to upsert job_description to job_details table
 
@@ -113,6 +113,53 @@ async def upsert_job_description(job_id: str, job_description: str):
     )
     await db.commit()
     # logger.info(f"Upserted job_description for job_id: {job_id}")
+
+# --- Update applied status for a job ---
+async def update_job_applied(
+    job_id: str,
+    applied: int = 1,
+    applied_timestamp: Optional[int] = None,
+) -> int:
+    """
+    Updates job_details.applied state for a given job_id.
+    - applied must be 0 or 1 (schema enforces this). Defaults to 1.
+    - applied_timestamp defaults to current epoch seconds if None.
+    Returns the number of rows updated (0 if job_id not found).
+    """
+    # Normalize applied to 0/1 defensively
+    applied_val = 1 if applied == 1 else 0
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        UPDATE job_details
+        SET job_applied = ?,
+            job_applied_timestamp = COALESCE(?, CAST(strftime('%s','now') AS INTEGER))
+        WHERE job_id = ?
+        """,
+        (applied_val, applied_timestamp, job_id),
+    )
+    await db.commit()
+    logger.info(f"Updated job_applied={applied_val} for job_id: {job_id}")
+    return cursor.rowcount or 0
+
+async def clear_job_applied(job_id: str) -> int:
+    """
+    Clears the applied status for a job: sets job_applied=0 and job_applied_timestamp=NULL.
+    Returns number of rows updated.
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        UPDATE job_details
+        SET job_applied = 0,
+            job_applied_timestamp = NULL
+        WHERE job_id = ?
+        """,
+        (job_id,),
+    )
+    await db.commit()
+    logger.info(f"Cleared job_applied for job_id: {job_id}")
+    return cursor.rowcount or 0
 
 # --- Upsert for document_store ---
 async def upsert_document(
@@ -487,6 +534,15 @@ async def get_job_details() -> list[dict]:
     async with db.execute("SELECT * FROM job_details") as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+async def get_job_detail_by_id(job_id: str) -> Optional[dict]:
+    """
+    Returns a single job_details row for the given job_id, or None if not found.
+    """
+    db = await get_db()
+    async with db.execute("SELECT * FROM job_details WHERE job_id = ?", (job_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
         
 # Insert new function to get a list of job_id in job_details without description
 
@@ -546,12 +602,25 @@ async def get_document_prompt_generate_job_assessment() -> dict:
             logger.warning("No job assessment prompt found in document_store.")
             return {"document_id": None, "document_markdown": None}
 
+async def get_document_master_resume_json() -> dict:
+    """
+    Returns the master resume JSON content.
+    """
+    db = await get_db()
+    async with db.execute("SELECT document_id, document_markdown FROM document_store WHERE document_name = 'master_resume_json' ORDER BY document_timestamp DESC") as cursor:
+        row = await cursor.fetchone()
+        if row:
+            return {"document_id": row["document_id"], "document_markdown": row["document_markdown"]}
+        else:
+            logger.warning("No master resume found in document_store.")
+            return {"document_id": None, "document_markdown": None}
+        
 async def get_document_master_resume() -> dict:
     """
     Returns the master resume markdown content.
     """
     db = await get_db()
-    async with db.execute("SELECT document_id, document_markdown FROM document_store WHERE document_name = 'master_resume_json' ORDER BY document_timestamp DESC") as cursor:
+    async with db.execute("SELECT document_id, document_markdown FROM document_store WHERE document_name = 'master_resume' ORDER BY document_timestamp DESC") as cursor:
         row = await cursor.fetchone()
         if row:
             return {"document_id": row["document_id"], "document_markdown": row["document_markdown"]}
@@ -582,6 +651,13 @@ async def get_job_ids_without_assessment() -> list[dict]:
 async def get_job_skills() -> list[dict]:
     db = await get_db()
     async with db.execute("SELECT * FROM job_skills") as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+# --- Get all job_skills for specific job_id ---
+async def get_job_skills_for_job(job_id: str) -> list[dict]:
+    db = await get_db()
+    async with db.execute("SELECT * FROM job_skills WHERE job_id = ?", (job_id,)) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -665,6 +741,47 @@ async def get_job_details_without_assessment(limit:int=100, days_back:int=14) ->
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+# --- Recent assessed jobs (by llm_runs_v2 end time, only jobs that have skills) ---
+async def get_recent_assessed_jobs(days_back: int = 5, limit: int = 200) -> list[dict]:
+    """
+    Returns jobs that have been assessed in the last `days_back` days based on llm_runs_v2.llm_run_end.
+    - Only includes job_ids that exist in job_skills (i.e., have an assessment result stored).
+    - Aggregates llm_runs_v2 by job_id to get the latest llm_run_end as assessment_time.
+    - Joins job_details to enrich output; returns latest first.
+    Assumes llm_run_end is epoch seconds.
+    """
+    db = await get_db()
+    # Compute the epoch seconds cutoff in SQLite to avoid clock skew between app and DB.
+    async with db.execute(
+        """
+        WITH latest_assessment AS (
+            SELECT
+                job_id,
+                MAX(CAST(llm_run_end AS INTEGER)) AS assessment_time
+            FROM llm_runs_v2
+            WHERE llm_run_end IS NOT NULL
+            GROUP BY job_id
+        ),
+        cutoff AS (
+            SELECT CAST(strftime('%s','now') AS INTEGER) - (? * 86400) AS since_ts
+        )
+        SELECT
+            jd.*, 
+            la.assessment_time AS last_assessed_at
+        FROM latest_assessment la
+        INNER JOIN job_skills js ON js.job_id = la.job_id
+        INNER JOIN job_details jd ON jd.job_id = la.job_id
+        CROSS JOIN cutoff c
+        WHERE la.assessment_time >= c.since_ts
+        GROUP BY jd.job_id
+        ORDER BY la.assessment_time DESC
+        LIMIT ?
+        """,
+        (days_back, limit),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
 async def get_quarantined_job_details_for_assessment(limit:int=100, days_back:int=14) -> list[dict]:
     """
     Returns a list of job_details for quarantined jobs where job_skills assessment is still needed.
@@ -728,4 +845,19 @@ async def delete_job_quarantine(job_id: str):
     )
     await db.commit()
     logger.info(f"Deleted quarantine records for job_id: {job_id}")
+
+
+# --- Delete job_skills for a job_id ---
+async def delete_job_skills_by_job_id(job_id: str):
+    """
+    Deletes all job_skills records for the specified job_id.
+    Use this before regenerating an assessment to avoid duplicate skills.
+    """
+    db = await get_db()
+    await db.execute(
+        "DELETE FROM job_skills WHERE job_id = ?",
+        (job_id,)
+    )
+    await db.commit()
+    logger.info(f"Deleted job_skills for job_id: {job_id}")
 
