@@ -94,3 +94,41 @@
 #         """, (days_back, limit)) as cursor:
 #         rows = await cursor.fetchall()
 #         return [dict(row) for row in rows]
+
+# async def get_job_ids_without_description() -> list[str]:
+#     """
+#     Returns a list of job_id values from job_details where job_description is NULL or empty, excluding those in job_quarantine.
+#     """
+#     db = await get_db()
+#     async with db.execute("""
+#         SELECT job_id FROM job_details 
+#         WHERE (job_description IS NULL OR job_description = '')
+#         AND job_id NOT IN (SELECT DISTINCT job_id FROM job_quarantine)
+#     """) as cursor:
+#         rows = await cursor.fetchall()
+#         return [row[0] for row in rows]
+
+# async def get_llm_runs() -> list[dict]:
+#     db = await get_db()
+#     async with db.execute("SELECT * FROM llm_runs") as cursor:
+#         rows = await cursor.fetchall()
+#         return [dict(row) for row in rows]
+
+# async def get_job_runs() -> list[dict]:
+#     db = await get_db()
+#     async with db.execute("SELECT * FROM job_runs") as cursor:
+#         rows = await cursor.fetchall()
+#         return [dict(row) for row in rows]
+
+# async def get_run_findings() -> list[dict]:
+#     db = await get_db()
+#     async with db.execute("SELECT * FROM run_findings") as cursor:
+#         rows = await cursor.fetchall()
+#         return [dict(row) for row in rows]
+
+
+# async def get_job_assessment() -> list[dict]:
+#     db = await get_db()
+#     async with db.execute("SELECT * FROM job_assessment") as cursor:
+#         rows = await cursor.fetchall()
+#         return [dict(row) for row in rows]

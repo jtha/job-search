@@ -13,14 +13,9 @@ from .db import (
     clear_job_applied,
     delete_job_skills_by_job_id,
     get_job_detail_by_id,
-    get_job_runs,
     get_job_details,
     get_document_store,
-    get_run_findings,
-    get_job_assessment,
     get_llm_models,
-    get_llm_runs,
-    get_job_ids_without_description,
     get_recent_job_skills,
     get_prompts,
     get_recent_assessed_jobs
@@ -109,10 +104,6 @@ async def read_root():
     """A simple root endpoint to confirm the server is running."""
     return {"message": "Welcome to the Job Tracker API!"}
 
-@app.get("/job_runs", response_model=list[dict])
-async def get_job_runs_endpoint():
-    return await get_job_runs()
-
 @app.get("/job_details", response_model=list[dict])
 async def get_job_details_endpoint():
     return await get_job_details()
@@ -121,25 +112,13 @@ async def get_job_details_endpoint():
 async def get_document_store_endpoint():
     return await get_document_store()
 
-@app.get("/run_findings", response_model=list[dict])
-async def get_run_findings_endpoint():
-    return await get_run_findings()
-
-@app.get("/job_assessment", response_model=list[dict])
-async def get_job_assessment_endpoint():
-    return await get_job_assessment()
-
 @app.get("/llm_models", response_model=list[dict])
 async def get_llm_models_endpoint():
     return await get_llm_models()
 
-@app.get("/llm_runs", response_model=list[dict])
-async def get_llm_runs_endpoint():
-    return await get_llm_runs()
-
-@app.get("/get_job_ids_without_description", response_model=list[str])
-async def get_job_ids_without_description_endpoint():
-    return await get_job_ids_without_description()
+@app.get("/prompts", response_model=list[dict])
+async def get_prompts_endpoint():
+    return await get_prompts()
 
 @app.get("/job_skills_recent", response_model=list[dict])
 async def get_job_skills_recent_endpoint(
@@ -147,10 +126,6 @@ async def get_job_skills_recent_endpoint(
     limit: int = Query(300, gt=0, description="Maximum number of jobs to consider when collecting skills.")
 ):
     return await get_recent_job_skills(days_back=days_back, limit=limit)
-
-@app.get("/prompts", response_model=list[dict])
-async def get_prompts_endpoint():
-    return await get_prompts()
 
 @app.get("/jobs_recent", response_model=list[dict])
 async def get_jobs_recent_endpoint(

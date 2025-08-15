@@ -521,12 +521,6 @@ async def upsert_llm_run_v2(
     await db.commit()
     # logger.info(f"Upserted llm_run_v2: {llm_run_id}")
 
-async def get_job_runs() -> list[dict]:
-    db = await get_db()
-    async with db.execute("SELECT * FROM job_runs") as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
 async def get_job_details() -> list[dict]:
     db = await get_db()
     async with db.execute("SELECT * FROM job_details") as cursor:
@@ -541,21 +535,6 @@ async def get_job_detail_by_id(job_id: str) -> Optional[dict]:
     async with db.execute("SELECT * FROM job_details WHERE job_id = ?", (job_id,)) as cursor:
         row = await cursor.fetchone()
         return dict(row) if row else None
-        
-# Insert new function to get a list of job_id in job_details without description
-
-async def get_job_ids_without_description() -> list[str]:
-    """
-    Returns a list of job_id values from job_details where job_description is NULL or empty, excluding those in job_quarantine.
-    """
-    db = await get_db()
-    async with db.execute("""
-        SELECT job_id FROM job_details 
-        WHERE (job_description IS NULL OR job_description = '')
-        AND job_id NOT IN (SELECT DISTINCT job_id FROM job_quarantine)
-    """) as cursor:
-        rows = await cursor.fetchall()
-        return [row[0] for row in rows]
 
 async def get_document_store() -> list[dict]:
     db = await get_db()
@@ -563,27 +542,9 @@ async def get_document_store() -> list[dict]:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-async def get_run_findings() -> list[dict]:
-    db = await get_db()
-    async with db.execute("SELECT * FROM run_findings") as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-async def get_job_assessment() -> list[dict]:
-    db = await get_db()
-    async with db.execute("SELECT * FROM job_assessment") as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
 async def get_llm_models() -> list[dict]:
     db = await get_db()
     async with db.execute("SELECT * FROM llm_models") as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-async def get_llm_runs() -> list[dict]:
-    db = await get_db()
-    async with db.execute("SELECT * FROM llm_runs") as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
