@@ -78,6 +78,43 @@ OUR PURPOSE & VALUES: Everything we do is about caring for our patients, our mem
     }
   ]
 }"""
+    },
+    {
+      "role": "user",
+      "content": """\
+<job_description>
+## About the job
+
+Maven is looking for a Senior Manager, Business Intelligence to lead and expand our Business Intelligence function. This role will set the technical vision, manage a growing team, and oversee strategic projects to uncover business insights that enable data-driven decision-making. As part of the Business Intelligence team, you will partner closely with our Client Success, Finance, Sales, and Marketing teams to drive the adoption of scalable data models, reporting solutions, and actionable insights across the organization. As a Senior Manager, Business Intelligence at Maven, you will: Lead, mentor, and develop a high-performing Business Intelligence team, fostering growth and collaboration. Design, develop, and oversee the implementation of data structures from both internal and 3rd party sources for use in analytics and reporting (primarily using SQL and Python). Partner with stakeholders across Client Success, Finance, Sales, Marketing and Engineering teams to build dedicated data models and reporting that support critical business processes and goals. Drive operational efficiency by identifying areas for process improvement and recommending highly scalable solutions. Establish and promote development best practices, coding standards, and design principles across the team. Deliver actionable insights and analysis to stakeholders across Maven teams, highlighting opportunities to improve outcomes and better serve our business. Explore and evaluate emerging technologies, tools, and trends that can drive innovation and improve the efficiency and effectiveness of our data analytics processes. Requirements include 10+ years of relevant analytics or data science experience, including a minimum of 3 years of management experience leading technical teams. Fluency in SQL and a strong background in data visualization. Hands-on experience with Python or R is preferred. Proven ability to manage both long-term strategic initiatives and ad hoc, high-priority requests as needed. Excellent leadership, collaboration, and communication skills, with a track record of working effectively with cross-functional teams and developing junior team members. Maven embraces a flexible hybrid work model with primary operation from New York Metropolitan area, NY, San Francisco/Bay Area, CA, Seattle, WA, Boston, MA, Chicago, IL, and Washington, D.C. The policy balances remote work flexibility with face-to-face interaction benefits.
+</job_description>"""
+    },
+    {
+      "role": "assistant",
+      "content": """\
+{
+  "tagged_list": [
+    {
+      "text": "10+ years of relevant analytics or data science experience, including a minimum of 3 years of management experience leading technical teams.",
+      "category": "required"
+    },
+    {
+      "text": "Fluency in SQL and a strong background in data visualization.",
+      "category": "required"
+    },
+    {
+      "text": "Hands-on experience with Python or R is preferred.",
+      "category": "additional"
+    },
+    {
+      "text": "Proven ability to manage both long-term strategic initiatives and ad hoc, high-priority requests as needed.",
+      "category": "required"
+    },
+    {
+      "text": "Excellent leadership, collaboration, and communication skills, with a track record of working effectively with cross-functional teams and developing junior team members.",
+      "category": "required"
+    }
+  ]
+}"""
     }
 ]
 
