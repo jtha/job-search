@@ -35,7 +35,7 @@ from .llm import (
 # Pydantic Models
 
 class LinkedInScrapeRequest(BaseModel):
-    keywords: list[str]  # Changed to accept a list of keywords
+    keywords: list[str]
     max_pages: int = 10
 
 class JobDetailsWithoutAssessmentRequest(BaseModel):

@@ -411,15 +411,11 @@ async def process_single_job_assessment(
             )
             return False
 
-        # Only upsert job skills if there were no errors in any preceding steps
-        # Upsert all skills from final_classifications, using match data if available
         for item in final_classifications:
-            # Check if this item was processed for matching (in filtered_items)
             match_data = next((filtered_item for filtered_item in filtered_items 
                              if filtered_item['requirement_string'] == item['requirement_string']), None)
             
             if match_data:
-                # Item was processed for matching, use the match data
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
@@ -430,7 +426,6 @@ async def process_single_job_assessment(
                     job_skills_resume_id=resume['document_id'],
                 )
             else:
-                # Item was not processed for matching (e.g., evaluated_qualification), upsert without match data
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
@@ -441,18 +436,15 @@ async def process_single_job_assessment(
                     job_skills_resume_id=resume['document_id'],
                 )
         
-        # Log completion with detailed token summary
         token_summary_parts = []
         for model, details in token_details_by_model.items():
             summary = f"{model}: input={details['input']}, output={details['output']}, thinking={details['thinking']}"
             token_summary_parts.append(summary)
         token_summary = "; ".join(token_summary_parts)
-        logger.info(f"Job assessment finished for job_id {job_id}, token consumption by model: {token_summary}")
+        logger.info(f"Completed job assessment for job_id {job_id}")
+        logger.info(f"Usage for job_id {job_id}: {token_summary}")
         
         return True
-
-# 
-
 
 async def generate_job_assessment_with_id(job_id: str):
     """
@@ -461,7 +453,7 @@ async def generate_job_assessment_with_id(job_id: str):
     - Otherwise, run the same pipeline used in generate_job_assessment for that single job,
       then return the resulting job_skills for the job_id.
     """
-    # Check if assessment already exists
+
     try:
         existing = await get_job_skills_for_job(job_id)
     except Exception as e:
@@ -471,7 +463,6 @@ async def generate_job_assessment_with_id(job_id: str):
     if existing:
         return existing
 
-    # Fetch the job details for the specific job_id
     try:
         all_jobs = await get_job_details()
         job = next((j for j in all_jobs if j.get("job_id") == job_id), None)
@@ -484,7 +475,6 @@ async def generate_job_assessment_with_id(job_id: str):
     if not job.get("job_description"):
         return {"error": f"job_id {job_id} has no job_description"}
 
-    # Load resume and prompts similar to generate_job_assessment
     resume_json = await get_document_master_resume_json()
     resume = await get_document_master_resume()
 
@@ -513,7 +503,6 @@ async def generate_job_assessment_with_id(job_id: str):
         logger.error("Prompt configuration for job assessment not found.")
         return {"error": "Prompt configuration for job assessment not found"}
 
-    # Process the single job with semaphore of 1
     semaphore = asyncio.Semaphore(1)
     try:
         success = await process_single_job_assessment(
@@ -534,7 +523,6 @@ async def generate_job_assessment_with_id(job_id: str):
         # Return empty skills to indicate no data created (or user can inspect quarantine)
         return []
 
-    # Fetch and return the newly created job skills
     try:
         return await get_job_skills_for_job(job_id)
     except Exception as e:

@@ -94,23 +94,23 @@ Maven is looking for a Senior Manager, Business Intelligence to lead and expand 
 {
   "tagged_list": [
     {
-      "text": "10+ years of relevant analytics or data science experience, including a minimum of 3 years of management experience leading technical teams.",
+      "raw_string": "10+ years of relevant analytics or data science experience, including a minimum of 3 years of management experience leading technical teams.",
       "category": "required"
     },
     {
-      "text": "Fluency in SQL and a strong background in data visualization.",
+      "raw_string": "Fluency in SQL and a strong background in data visualization.",
       "category": "required"
     },
     {
-      "text": "Hands-on experience with Python or R is preferred.",
+      "raw_string": "Hands-on experience with Python or R is preferred.",
       "category": "additional"
     },
     {
-      "text": "Proven ability to manage both long-term strategic initiatives and ad hoc, high-priority requests as needed.",
+      "raw_string": "Proven ability to manage both long-term strategic initiatives and ad hoc, high-priority requests as needed.",
       "category": "required"
     },
     {
-      "text": "Excellent leadership, collaboration, and communication skills, with a track record of working effectively with cross-functional teams and developing junior team members.",
+      "raw_string": "Excellent leadership, collaboration, and communication skills, with a track record of working effectively with cross-functional teams and developing junior team members.",
       "category": "required"
     }
   ]
@@ -171,39 +171,39 @@ Maven is looking for a Senior Manager, Business Intelligence to lead and expand 
 {
   "assessed_objects": [
     {
-      "a_requirement_string": "Demonstrate strong ability to work with multiple stakeholders",
-      "b_match_reasoning": "Match found. The skill "Stakeholder Management" is listed in the candidate"s detailed_skills with 8.2 years of experience.",
-      "c_match": true
+      "requirement_string": "Demonstrate strong ability to work with multiple stakeholders",
+      "match_reasoning": "Match found. The skill "Stakeholder Management" is listed in the candidate"s detailed_skills with 8.2 years of experience.",
+      "match": true
     },
     {
-      "a_requirement_string": "Minimum of 10 years-Relevant experience",
-      "b_match_reasoning": "Match found. The candidate"s total_experience_years is 11.4, which meets the "10+" year requirement.",
-      "c_match": true
+      "requirement_string": "Minimum of 10 years-Relevant experience",
+      "match_reasoning": "Match found. The candidate"s total_experience_years is 11.4, which meets the "10+" year requirement.",
+      "match": true
     },
     {
-      "a_requirement_string": "with at least 5 years in a leadership role",
-      "b_match_reasoning": "Match found. Candidate has 8.2 years of "Leadership" experience listed in detailed_skills and 8.2 years of "Management" experience in domain_specific_experience, which meets the "5+" year requirement.",
-      "c_match": true
+      "requirement_string": "with at least 5 years in a leadership role",
+      "match_reasoning": "Match found. Candidate has 8.2 years of "Leadership" experience listed in detailed_skills and 8.2 years of "Management" experience in domain_specific_experience, which meets the "5+" year requirement.",
+      "match": true
     },
     {
-      "a_requirement_string": "Epic Healthy Planet or Compass Rose",
-      "b_match_reasoning": "No match. The required skill "Epic Healthy Planet or Compass Rose" is not mentioned in the candidate"s detailed_skills.",
-      "c_match": false
+      "requirement_string": "Epic Healthy Planet or Compass Rose",
+      "match_reasoning": "No match. The required skill "Epic Healthy Planet or Compass Rose" is not mentioned in the candidate"s detailed_skills.",
+      "match": false
     },
     {
-      "a_requirement_string": "SQL",
-      "b_match_reasoning": "Match found. The skill "SQL" is listed in the candidate"s detailed_skills with 7 years of experience.",
-      "c_match": true
+      "requirement_string": "SQL",
+      "match_reasoning": "Match found. The skill "SQL" is listed in the candidate"s detailed_skills with 7 years of experience.",
+      "match": true
     },
     {
-      "a_requirement_string": "Epic Clarity",
-      "b_match_reasoning": "No match. The required skill "Epic Clarity" is not mentioned in the candidate"s detailed_skills.",
-      "c_match": false
+      "requirement_string": "Epic Clarity",
+      "match_reasoning": "No match. The required skill "Epic Clarity" is not mentioned in the candidate"s detailed_skills.",
+      "match": false
     },
     {
-      "a_requirement_string": "Caboodle",
-      "b_match_reasoning": "No match. The required skill "Caboodle" is not mentioned in the candidate"s detailed_skills.",
-      "c_match": false
+      "requirement_string": "Caboodle",
+      "match_reasoning": "No match. The required skill "Caboodle" is not mentioned in the candidate"s detailed_skills.",
+      "match": false
     }
   ]
 }"""}
