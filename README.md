@@ -1,10 +1,10 @@
 # job-search
 
 ## About the Project
-This project automates job search tasks for job seekers who need to apply to multiple positions efficiently. The system addresses the challenge of managing high-volume job applications by automating lead generation, qualification, and application tracking.
+This project automates job search tasks for job seekers who need to apply to multiple positions efficiently. The system addresses the challenge of managing high-volume job applications by providing user-controlled job extraction, AI-powered qualification analysis, and application tracking.
 
 Project scope:
-1. ✅ Build a lead generation system to find job postings.
+1. ✅ Build a lead generation system to extract job postings from LinkedIn.
 2. ✅ Build a lead scoring and qualification system to filter job postings.
 3. 🚧 Build a content generation system to generate cover letters and resumes.
 4. 🚧 Build a dashboard to track job applications.
@@ -12,23 +12,26 @@ Project scope:
 ## Current Features
 
 ### 1. Lead Generation System (✅ Implemented)
-- **LinkedIn Job Crawler**: Automated scraping of LinkedIn job postings using Playwright
-- **Multi-page Scraping**: Configurable pagination support for bulk job collection
-- **Structured Data Extraction**: Extracts job title, company, location, salary, and URLs
-- **Duplicate Prevention**: Unique job ID generation to avoid duplicate entries
-- **Job Description Extraction**: Secondary scraping to collect detailed job descriptions
+- **Firefox Browser Extension**: User-controlled job data extraction from LinkedIn job postings
+- **HTML Content Processing**: Manual extraction and parsing of LinkedIn job page content
+- **Background Task Management**: Asynchronous processing with task queuing and status tracking
+- **Multi-page Dashboard**: Comprehensive interface for job management, history, and resume viewing
+- **Structured Data Extraction**: Extracts job title, company, location, salary, and full descriptions
+- **Automatic Assessment Integration**: Seamlessly triggers AI analysis after successful extraction
+- **OpenRouter Credit Monitoring**: Real-time API usage tracking and cost awareness
 
 ### 2. Lead Qualification System (✅ Implemented)
-- **AI Assessment**: 4-step job analysis pipeline using Google Gemini AI
+- **AI Assessment**: 4-step job analysis pipeline using OpenRouter's reasoning-capable models
   - **Job Description Tagging**: Categorizes requirements as required vs. additional
   - **Atomic Decomposition**: Breaks down requirements into individual skill components
   - **Classification**: Categorizes skills as required, additional, or evaluated qualifications
   - **Resume Matching**: Individual assessment of each skill against candidate profile
-- **Structured Data Generation**: JSON schema-based responses for consistent analysis
-- **Skills Database**: Storage of job requirements and match results
+- **Pydantic Schema Validation**: Type-safe structured responses for consistent analysis
+- **Conservative Matching Logic**: Evidence-based matching with detailed reasoning for each decision
+- **Skills Database**: Comprehensive storage of job requirements and match assessments
 - **Concurrent Processing**: Semaphore-controlled parallel assessment for scalability
 - **Error Recovery**: Quarantine system with retry logic for failed assessments
-- **Token Usage Tracking**: Monitoring of AI API consumption
+- **Token Usage Tracking**: Detailed monitoring of AI API consumption with cost optimization
 
 ### 3. Data Management & Storage
 - **SQLite Database**: Data model with 12+ tables including:
@@ -41,7 +44,16 @@ Project scope:
 - **Prompt Management**: Template-based system with versioning and model configuration
 - **Data Export**: JSONL exports for analysis and backup
 
-### 4. API & Integration
+### 4. Frontend & User Interface
+- **Firefox Browser Extension**: Complete job extraction and management interface
+  - **Sidebar Interface**: Primary job processing controls and status monitoring
+  - **Dashboard Pages**: Multi-page interface for job overview, history, session tracking, and resume viewing
+  - **Task Management**: Local storage-based task queuing with status tracking
+  - **Real-time Updates**: Live status updates during job processing
+- **Extension Security**: Minimal permissions with secure localhost API communication
+- **Cross-session Persistence**: Task and job data persistence across browser sessions
+
+### 5. API & Integration
 - **FastAPI Server**: RESTful API for all operations
 - **Async Operations**: Non-blocking database and AI operations
 - **Structured Logging**: Logging with rotation
@@ -52,23 +64,30 @@ Project scope:
 #### Backend
 * [Python 3.12+](https://www.python.org/) - Core language
 * [FastAPI](https://fastapi.tiangolo.com/) - Web framework
-* [Playwright](https://playwright.dev/) - Browser automation for scraping
 * [SQLite](https://www.sqlite.org/) - Database
-* [Google Gemini AI](https://ai.google.dev/) - AI-powered job assessment
+* [OpenRouter](https://openrouter.ai/) - AI-powered job assessment with reasoning models
 * [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
-* [Pydantic](https://pydantic.dev/) - Data validation
+* [Pydantic](https://pydantic.dev/) - Data validation and structured responses
 * [aiosqlite](https://aiosqlite.omnilib.dev/) - Async SQLite operations
+* [Jinja2](https://jinja.palletsprojects.com/) - Template rendering for AI prompts
+* [Markdownify](https://github.com/matthewwithanm/python-markdownify) - HTML to Markdown conversion
+
+#### Frontend
+* [Firefox WebExtension API](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions) - Browser extension framework
+* [Manifest V3](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/manifest_version) - Extension architecture
+* Vanilla JavaScript - Extension logic and UI interactions
+* HTML5 & CSS3 - Extension interface and styling
 
 #### Development Tools
 * [uv](https://github.com/astral-sh/uv) - Python package management
-* [pytest-playwright](https://playwright.dev/python/docs/test-runners) - Testing framework
 
 ## Getting Started
 
 ### Prerequisites
 - Python 3.12 or higher
-- Google Gemini API key
-- Chromium browser (installed via Playwright)
+- OpenRouter API key
+- Firefox browser
+- Backend API server running locally
 
 ### Installation
 
@@ -83,21 +102,22 @@ cd job-search
 uv sync
 ```
 
-3. Install Playwright browsers:
-```bash
-uv run playwright install chromium
-```
-
-4. Set up environment variables:
+3. Set up environment variables:
 ```bash
 cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Edit .env and add your OPENROUTER_API_KEY
 ```
 
-5. Initialize the database:
+4. Initialize the database:
 ```bash
 uv run python -m backend.db_init
 ```
+
+5. Load the Firefox extension:
+   - Open Firefox and navigate to `about:debugging`
+   - Click "This Firefox" > "Load Temporary Add-on"
+   - Navigate to `frontend/companion-firefox/` and select `manifest.json`
+   - Grant required permissions when prompted
 
 ### Usage
 
@@ -106,57 +126,71 @@ uv run python -m backend.db_init
 uv run uvicorn backend.api_server:app --reload
 ```
 
-#### Browser Authentication Setup
-Periodically log on to authenticate browser and save cookies to file:  
-```bash
-uv run playwright codegen --browser chromium --save-storage=./playwright/.auth/auth_1.json https://www.linkedin.com
-```
+#### Using the Firefox Extension
 
-#### Core Operations
+**1. Navigate to LinkedIn Job:**
+- Visit any LinkedIn job posting page
+- Click the extension icon to open the sidebar
 
-**1. Run Job Search and Collection:**
+**2. Process Job:**
+- Click "Process Job" button in the sidebar
+- Monitor processing status in real-time
+- Job will be automatically extracted and assessed
+
+**3. View Results:**
+- Access processed jobs via the extension dashboard
+- View detailed qualification analysis and match reasoning
+- Track processing history and session statistics
+
+#### API Operations
+
+**1. Manual HTML Extraction:**
 ```bash
-# Use the API to scrape LinkedIn jobs
-curl -X POST "http://localhost:8000/scrape_linkedin_multi_page" \
+# Process job HTML content directly
+curl -X POST "http://localhost:8000/html_extract" \
      -H "Content-Type: application/json" \
-     -d '{"keywords": ["data analyst", "python developer"], "max_pages": 5}'
+     -d '{"html": "<html>...</html>", "url": "https://www.linkedin.com/jobs/view/12345678"}'
 ```
 
-**2. Fill Missing Job Descriptions:**
+**2. Regenerate Job Assessment:**
 ```bash
-# Extract detailed job descriptions for collected jobs
-curl -X POST "http://localhost:8000/fill_missing_job_descriptions?min_length=200"
+# Reprocess a specific job with updated prompts
+curl -X POST "http://localhost:8000/regenerate_job_assessment" \
+     -H "Content-Type: application/json" \
+     -d '{"job_id": "12345678"}'
 ```
 
-**3. Assess Jobs Against Resume:**
+**3. Manage Application Status:**
 ```bash
-# Run AI assessment on collected jobs
-curl -X POST "http://localhost:8000/generate_job_assessments?limit=50&days_back=14&semaphore_count=5"
+# Mark job as applied
+curl -X POST "http://localhost:8000/update_job_applied" \
+     -H "Content-Type: application/json" \
+     -d '{"job_id": "12345678"}'
+
+# Revert application status  
+curl -X POST "http://localhost:8000/update_job_unapplied" \
+     -H "Content-Type: application/json" \
+     -d '{"job_id": "12345678"}'
 ```
 
-**4. Retry Failed Assessments:**
-```bash
-# Process quarantined jobs that failed initial assessment
-curl -X POST "http://localhost:8000/generate_failed_job_assessments?limit=50&days_back=14&semaphore_count=5"
-```
-
-**3. API Endpoints:**
+**4. API Endpoints:**
 - `GET /job_details` - List all collected jobs
-- `GET /job_skills` - List job skill requirements and assessments
-- `GET /llm_runs_v2` - List AI interaction history
-- `POST /scrape_linkedin_multi_page` - Trigger LinkedIn job collection
-- `POST /fill_missing_job_descriptions` - Extract detailed job descriptions
-- `POST /generate_job_assessments` - Trigger job assessment pipeline
-- `POST /generate_failed_job_assessments` - Retry failed assessments
-- `GET /prompts` - List AI prompt configurations
+- `GET /jobs_recent?days_back=5&limit=300` - Recent assessed jobs  
+- `GET /job_skills_recent?days_back=5&limit=300` - Recent job skills analysis
+- `GET /openrouter_credits` - Check API credit balance
+- `GET /master_resume` - Get master resume document
+- `POST /html_extract` - Process job HTML content
+- `POST /regenerate_job_assessment` - Regenerate job assessment
+- `POST /update_job_applied` - Mark job as applied
+- `POST /update_job_unapplied` - Revert application status
 
 ## Project Structure
 
 ```
 backend/
-├── api_server.py          # FastAPI application and endpoints
-├── crawler.py             # LinkedIn job scraping logic
-├── llm.py                 # AI-powered job assessment with 4-step pipeline
+├── api_server.py          # FastAPI application and endpoints  
+├── crawler.py             # LinkedIn HTML parsing and job data extraction
+├── llm.py                 # OpenRouter AI-powered job assessment pipeline
 ├── db.py                  # Database operations and models
 ├── db_init.py             # Database initialization
 ├── utilities.py           # Logging and utility functions
@@ -165,62 +199,90 @@ backend/
 ├── logs/                  # Application logs
 └── db_exports/            # Data export files
 
+frontend/
+└── companion-firefox/     # Firefox browser extension
+    ├── manifest.json      # Extension configuration
+    ├── background.js      # Background worker for API calls
+    ├── sidebar/           # Main extraction interface
+    ├── dashboard/         # Job management overview
+    ├── history/           # Processing history view  
+    ├── session/           # Current session tracking
+    ├── resume/            # Resume viewer
+    ├── shared/            # Shared navigation components
+    └── styles/            # Extension styling
+
 docs/
-├── 01_lead_generation_system.md    # LinkedIn scraping documentation
-└── 02_lead_qualification_system.md # AI assessment pipeline documentation
+├── 01_lead_generation_system.md       # Firefox extension & HTML extraction documentation
+├── 02_lead_qualification_system.md    # AI assessment pipeline documentation
+└── 03_firefox_extension.md           # Complete browser extension documentation
 
 manually_generated/        # Generated resumes and cover letters
 notebooks/                 # Jupyter notebooks for analysis and testing
-playwright/                # Browser automation and authentication
 ```
 
 ## Database Schema
 
 The system uses a SQLite schema with the following key tables:
-- `job_runs` - Search execution tracking
-- `job_details` - Master job listings
-- `job_skills` - Atomic skill requirements and match assessments
+- `job_details` - Master job listings with extraction metadata
+- `job_skills` - Atomic skill requirements and detailed match assessments
 - `job_quarantine` - Failed processing tracking and retry management
-- `document_store` - Resume and prompt versioning
-- `llm_runs_v2` - AI interaction audit trail with token usage
-- `prompts` - Version-controlled AI prompt templates with model configuration
-- `run_findings` - Links job runs to discovered jobs
+- `document_store` - Resume and prompt versioning with job references
+- `llm_runs_v2` - Complete AI interaction audit trail with token usage tracking
+- `prompts` - Version-controlled AI prompt templates with model configurations
+- `llm_models` - Model definitions with cost per token for usage monitoring
 
 ## Roadmap
 
 ### Completed ✅
-- [x] LinkedIn job scraping system with authentication management
-- [x] SQLite database schema with 12+ tables for data tracking
-- [x] AI-powered job assessment using Google Gemini with structured generation
-- [x] Atomic skill decomposition and requirement categorization system
-- [x] RESTful API with FastAPI including job collection and assessment endpoints
-- [x] Logging and error handling with quarantine/retry system
-- [x] Prompt management system with versioning and model configuration
-- [x] Token usage tracking and cost monitoring for AI operations
-- [x] Concurrent processing with semaphore control for scalability
-- [x] Data export and backup functionality
+- [x] Firefox browser extension for user-controlled job extraction from LinkedIn
+- [x] Multi-page extension interface with dashboard, history, session, and resume views
+- [x] HTML content processing system with LinkedIn job page parsing
+- [x] SQLite database schema with comprehensive job and assessment tracking
+- [x] OpenRouter AI-powered job assessment using reasoning-capable models
+- [x] 4-step atomic skill decomposition and requirement categorization system
+- [x] Pydantic-based structured response validation for consistent AI outputs
+- [x] RESTful API with FastAPI for job processing and assessment management
+- [x] Comprehensive logging and error handling with quarantine/retry system
+- [x] Database-driven prompt management with versioning and model configuration
+- [x] Detailed token usage tracking and cost monitoring for AI operations
+- [x] Conservative matching logic with evidence-based assessment reasoning
+- [x] Real-time job processing status updates and task management
 
 ### In Progress 🚧
-- [ ] Frontend dashboard for job tracking
-- [ ] Cover letter generation system
-- [ ] Resume customization based on job requirements
+- [ ] Enhanced frontend dashboard for comprehensive job tracking and analytics
+- [ ] AI-powered cover letter generation system tailored to job requirements
+- [ ] Dynamic resume customization based on job skill gap analysis
+- [ ] Application status tracking with automated follow-up scheduling
 
 ### Planned 📋
+- [ ] Chrome/Chromium browser extension support for cross-browser compatibility
 - [ ] Support for additional job boards (Indeed, Glassdoor, etc.)
-- [ ] Advanced filtering and search capabilities for assessed jobs
-- [ ] Application status tracking and follow-up automation
-- [ ] Interview preparation assistance based on job skill gaps
-- [ ] Performance analytics and insights with cost optimization reports
-- [ ] Job recommendation engine based on skill match scores
-- [ ] Automated job application submission for high-match positions
+- [ ] Advanced filtering and search capabilities for assessed jobs with skill-based sorting
+- [ ] Interview preparation assistance based on identified job skill gaps
+- [ ] Performance analytics dashboard with cost optimization insights and trends
+- [ ] Job recommendation engine using machine learning on historical match patterns
+- [ ] Automated job application submission for high-confidence matches
+- [ ] Mobile companion app for job tracking and notifications
+- [ ] Integration with ATS systems for application status synchronization
 
 ## Configuration
 
 ### Environment Variables
 Create a `.env` file in the root directory:
 ```
-GEMINI_API_KEY=your_google_gemini_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
+
+### Extension Configuration
+The Firefox extension is configured via `manifest.json` with:
+- Minimal required permissions (activeTab, scripting, storage)
+- Content Security Policy allowing localhost API connections
+- Sidebar interface as the primary interaction method
+
+### API Configuration
+- **Backend Server**: Must run on `http://127.0.0.1:8000` for extension compatibility
+- **Database**: SQLite database with automatic schema initialization
+- **Master Resume**: Must be loaded as a document in the system for assessments
 
 ### Logging Configuration
 Logging is configured via `backend/logging.conf` with:
@@ -236,11 +298,14 @@ Once the server is running, visit:
 
 ## Performance Considerations
 
-- **Rate Limiting**: Built-in delays to respect LinkedIn's terms of service
+- **User-Controlled Processing**: Manual job extraction eliminates rate limiting concerns
+- **Background Task Management**: Non-blocking API calls with real-time status updates
+- **Conservative AI Assessment**: Evidence-based matching minimizes false positives
 - **Async Operations**: Non-blocking database and AI operations with semaphore control
-- **Error Recovery**: Quarantine system with retry logic for problematic jobs
-- **Memory Management**: Efficient data processing for large job collections
-- **Token Optimization**: Monitoring and optimization of AI API usage and costs
+- **Error Recovery**: Comprehensive quarantine system with retry logic for problematic jobs
+- **Memory Efficiency**: Minimal browser extension footprint with efficient data processing
+- **Token Optimization**: Intelligent prompt engineering and model selection for cost control
+- **Local Storage**: Task persistence across browser sessions without external dependencies
 
 ## Contributing
 
@@ -260,7 +325,8 @@ Project Link: [https://github.com/jtha/job-search](https://github.com/jtha/job-s
 
 ## Acknowledgments
 
-* [Playwright](https://playwright.dev/) for browser automation
-* [Google Gemini AI](https://ai.google.dev/) for language processing
-* [FastAPI](https://fastapi.tiangolo.com/) for the web framework
-* [uv](https://github.com/astral-sh/uv) for Python package management
+* [OpenRouter](https://openrouter.ai/) for cost-effective AI model access with reasoning capabilities
+* [FastAPI](https://fastapi.tiangolo.com/) for the high-performance web framework
+* [Firefox WebExtension API](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions) for browser extension support
+* [Pydantic](https://pydantic.dev/) for data validation and structured AI responses
+* [uv](https://github.com/astral-sh/uv) for efficient Python package management
