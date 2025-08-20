@@ -23,11 +23,37 @@
   <div class="container">
     <header>
       <h1>Dashboard</h1>
+      <div class="controls">
+        <label for="days-back">Days:</label>
+        <input id="days-back" type="number" min="1" value="5" />
+        <button id="refresh-btn" class="action-btn">Refresh</button>
+      </div>
     </header>
     <main id="dashboard-container">
-      <!-- Dashboard content will go here -->
-      <p>If you can see the navigation bar above, then the issue is with the JavaScript navigation generation.</p>
-      <p>If you can't see the navigation bar, then the issue is with the CSS or basic HTML structure.</p>
+      <div id="metrics-grid">
+        <div class="metric-card clickable" id="card-assessed">
+          <div class="metric-title">Total Jobs Assessed</div>
+          <div class="metric-value" id="total-assessed">-</div>
+          <div class="metric-description">Jobs with completed assessments</div>
+        </div>
+        <div class="metric-card clickable" id="card-feasible">
+          <div class="metric-title">Total Jobs Feasible</div>
+          <div class="metric-value" id="total-feasible">-</div>
+          <div class="metric-description">Jobs matching qualification criteria</div>
+        </div>
+        <div class="metric-card clickable" id="card-applied">
+          <div class="metric-title">Total Jobs Applied</div>
+          <div class="metric-value" id="total-applied">-</div>
+          <div class="metric-description">Jobs marked as applied</div>
+        </div>
+        <div class="metric-card clickable" id="card-feasible-not-applied">
+          <div class="metric-title">Feasible Jobs Not Applied</div>
+          <div class="metric-value" id="total-feasible-not-applied">-</div>
+          <div class="metric-description">Good opportunities not yet applied to</div>
+        </div>
+      </div>
+      <div id="loading-state" class="loading-message">Loading metrics...</div>
+      <div id="error-state" class="error-message" style="display: none;"></div>
     </main>
   </div>
   <script src="../shared/navigation.js"></script>

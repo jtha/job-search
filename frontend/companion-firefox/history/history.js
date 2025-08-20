@@ -62,7 +62,49 @@ const state = {
   skillsCacheByDays: new Map(),
   hideApplied: false,
   decentOnly: false,
+  showOnlyApplied: false,
 };
+
+// Function to parse URL parameters and set initial state
+function parseURLParams() {
+  const urlParams = new URLSearchParams(window.location.search);
+  
+  // Set days back from URL parameter
+  const days = urlParams.get('days');
+  if (days && daysBackInput) {
+    daysBackInput.value = days;
+  }
+  
+  // Set hideApplied filter from URL parameter
+  const hideApplied = urlParams.get('hideApplied');
+  if (hideApplied === 'true') {
+    state.hideApplied = true;
+  }
+  
+  // Set decentOnly filter from URL parameter
+  const decentOnly = urlParams.get('decentOnly');
+  if (decentOnly === 'true') {
+    state.decentOnly = true;
+  }
+  
+  // Special case: showApplied=true means we want to show only applied jobs
+  // This is different from hideApplied - it's for viewing applied jobs specifically
+  const showApplied = urlParams.get('showApplied');
+  if (showApplied === 'true') {
+    // We'll implement this by modifying the filter logic in loadHistory
+    state.showOnlyApplied = true;
+  }
+}
+
+// Function to update button text based on state
+function updateButtonStates() {
+  if (hideAppliedBtn) {
+    hideAppliedBtn.textContent = state.hideApplied ? 'Show Applied' : 'Hide Applied';
+  }
+  if (decentOnlyBtn) {
+    decentOnlyBtn.textContent = state.decentOnly ? 'Show All Leads' : 'Show Good Leads';
+  }
+}
 
 if (hideAppliedBtn) {
   hideAppliedBtn.addEventListener('click', () => {
@@ -505,6 +547,9 @@ async function loadHistory() {
     if (state.hideApplied) {
       jobsToRender = jobsToRender.filter(job => !(job.job_applied === 1 || job.job_applied === true));
     }
+    if (state.showOnlyApplied) {
+      jobsToRender = jobsToRender.filter(job => (job.job_applied === 1 || job.job_applied === true));
+    }
     if (state.decentOnly) {
       jobsToRender = jobsToRender.filter(job => isDecentLead(job.job_id, skillsMap));
     }
@@ -519,4 +564,8 @@ async function loadHistory() {
 
 refreshBtn.addEventListener('click', loadHistory);
 
-document.addEventListener('DOMContentLoaded', loadHistory);
+document.addEventListener('DOMContentLoaded', () => {
+  parseURLParams();
+  updateButtonStates();
+  loadHistory();
+});

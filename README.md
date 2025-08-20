@@ -215,9 +215,6 @@ docs/
 ├── 01_lead_generation_system.md       # Firefox extension & HTML extraction documentation
 ├── 02_lead_qualification_system.md    # AI assessment pipeline documentation
 └── 03_firefox_extension.md           # Complete browser extension documentation
-
-manually_generated/        # Generated resumes and cover letters
-notebooks/                 # Jupyter notebooks for analysis and testing
 ```
 
 ## Database Schema
@@ -261,9 +258,6 @@ The system uses a SQLite schema with the following key tables:
 - [ ] Interview preparation assistance based on identified job skill gaps
 - [ ] Performance analytics dashboard with cost optimization insights and trends
 - [ ] Job recommendation engine using machine learning on historical match patterns
-- [ ] Automated job application submission for high-confidence matches
-- [ ] Mobile companion app for job tracking and notifications
-- [ ] Integration with ATS systems for application status synchronization
 
 ## Configuration
 
