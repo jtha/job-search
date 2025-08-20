@@ -1,0 +1,326 @@
+/* History page styles */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f0f2f5;
+  margin: 0;
+  padding: 20px;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  padding: 20px;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+/* Controls container on the right side of the header */
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* Action button styles */
+.action-btn {
+  font-size: 15px;
+  padding: 8px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+#refresh-btn {
+  background-color: #0078e3;
+  color: white;
+  border: 1px solid #0060df;
+}
+#refresh-btn:hover { 
+  background-color: #0060df; 
+}
+
+#hide-applied-btn, #decent-only-btn {
+  background-color: #6c757d;
+  color: #fff;
+  border: 1px solid #6c757d;
+}
+#hide-applied-btn:hover, #decent-only-btn:hover {
+  background-color: #5a6268;
+  border-color: #545b62;
+}
+
+/* Job row styles */
+.job-row { 
+  position: relative; 
+  border: 1px solid #ddd; 
+  border-radius: 6px; 
+  margin-bottom: 10px; 
+  padding: 12px; 
+  transition: box-shadow 0.2s, background-color 0.2s, border-color 0.2s; 
+  background-color: #fff; 
+  cursor: pointer; 
+}
+
+/* When expanded, remove cursor pointer from the entire row */
+.job-row.expanded {
+  cursor: default;
+}
+
+.job-row.expanded { 
+  box-shadow: 0 6px 16px rgba(0,0,0,0.12); 
+  background-color: #f9fbff; 
+  border-color: #cfe0fb; 
+}
+
+.job-row.expanded::before { 
+  content: ""; 
+  position: absolute; 
+  left: 0; 
+  top: 0; 
+  bottom: 0; 
+  width: 3px; 
+  background: #2563eb; 
+  border-top-left-radius: 6px; 
+  border-bottom-left-radius: 6px; 
+}
+
+.job-row.applied { 
+  border: 4px solid #198754; 
+}
+
+.row-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  gap: 12px; 
+}
+
+/* When job row is expanded, only the header should show cursor pointer */
+.job-row.expanded .row-header {
+  cursor: pointer;
+}
+
+.row-title { 
+  font-size: 16px; 
+  font-weight: 600; 
+}
+
+.row-right { 
+  display: flex; 
+  gap: 12px; 
+  align-items: baseline; 
+}
+
+.row-fractions { 
+  font-size: 12px; 
+  color: #444; 
+  display: flex; 
+  gap: 10px; 
+}
+
+.fraction { 
+  background: #f1f5fb; 
+  border: 1px solid #d7e3f7; 
+  padding: 2px 6px; 
+  border-radius: 4px; 
+}
+
+.fraction-req { border-color: #cce5ff; }
+.fraction-add { border-color: #e2e3e5; }
+
+.fraction-good { 
+  background: #e6f8ed; 
+  border-color: #c7eed8; 
+  color: #1e7e34; 
+}
+
+.fraction-ok { 
+  background: #fff8e6; 
+  border-color: #ffe9a8; 
+  color: #996c00; 
+}
+
+.fraction-bad { 
+  background: #fdecea; 
+  border-color: #f5c6cb; 
+  color: #a71d2a; 
+}
+
+.fraction-empty { 
+  background: #f8f9fa; 
+  border-color: #e2e3e5; 
+  color: #6c757d; 
+}
+
+.row-location { 
+  font-size: 13px; 
+  color: #555; 
+}
+
+.row-submeta { 
+  font-size: 12px; 
+  color: #888; 
+  margin-top: 4px; 
+}
+
+.empty { 
+  color: #666; 
+  font-style: italic; 
+  text-align: center; 
+  margin-top: 40px; 
+}
+
+/* Details container */
+.details-container { 
+  display: none; 
+  margin-top: 12px; 
+  padding-top: 10px; 
+  border-top: 1px solid #eee; 
+}
+
+/* Sticky header for expanded rows */
+.job-row.expanded .row-header {
+  position: sticky;
+  top: var(--nav-height, 44px);
+  z-index: 6;
+  background: inherit;
+  padding: 12px;
+  margin: -12px -12px 0 -12px;
+  border-bottom: 1px solid #e6ecf5;
+}
+
+/* Tables */
+.job-data-table, .qualification-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.job-data-table td, .qualification-table td, .qualification-table th {
+  padding: 8px;
+  border: 1px solid #ddd;
+  text-align: left;
+  vertical-align: top;
+}
+
+.job-data-table td:first-child {
+  font-weight: 600;
+  color: #555;
+  width: 120px;
+}
+
+.qualification-table th {
+  background-color: #f2f2f2;
+  font-weight: 600;
+}
+
+.qualification-table th:nth-child(1), .qualification-table td:nth-child(1) { width: 40%; }
+.qualification-table th:nth-child(2), .qualification-table td:nth-child(2) { width: 15%; text-align: center; }
+.qualification-table th:nth-child(3), .qualification-table td:nth-child(3) { width: 45%; }
+
+/* Details content */
+h4 {
+  margin-top: 20px;
+  margin-bottom: 5px;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.job-description {
+  max-height: 250px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background-color: #f7f7f7;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #444;
+  border: 1px solid #e1e1e1;
+}
+
+.match-fraction {
+  font-size: 13px;
+  font-weight: normal;
+  color: #666;
+  margin-left: 8px;
+}
+
+.match-yes { color: #28a745; font-weight: bold; }
+.match-no { color: #dc3545; font-weight: bold; }
+
+/* Buttons in details */
+.copy-button {
+  width: auto;
+  margin-bottom: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  background-color: #e9e9e9;
+  color: #333;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+
+.copy-button:hover {
+  background-color: #dcdcdc;
+  border-color: #bbb;
+}
+
+.details-action-bar { 
+  display: flex; 
+  gap: 12px; 
+  align-items: center; 
+  margin: 8px 0; 
+}
+
+.regen-button { 
+  background-color: #6c757d; 
+  border: 1px solid #6c757d; 
+  color: #fff; 
+  padding: 4px 8px; 
+  border-radius: 4px; 
+  cursor: pointer; 
+}
+
+.regen-button:hover { 
+  background-color: #5a6268; 
+  border-color: #545b62; 
+}
+
+.details-action-bar .applied-button { 
+  margin-left: auto; 
+  background-color: #198754; 
+  border: 1px solid #198754; 
+  color: #fff; 
+}
+
+.details-action-bar .applied-button:hover { 
+  background-color: #157347; 
+  border-color: #146c43; 
+}
+
+.regen-status {
+  font-size: 12px;
+  color: #666;
+}

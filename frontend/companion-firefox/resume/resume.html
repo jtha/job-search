@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Resume</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="../styles/nav.css">
+  <link rel="stylesheet" href="resume.css">
+</head>
+<body>
+  <nav class="top-nav" aria-label="Primary">
+    <div class="nav-inner">
+        <div class="brand">Job Search Copilot</div>
+        <ul class="nav-links" role="list">
+        <li><a href="../dashboard/dashboard.html">Dashboard</a></li>
+        <li><a href="../history/history.html">History</a></li>
+        <li><a href="../session/session.html">Session</a></li>
+        <li><a href="../resume/resume.html" aria-current="page">Resume</a></li>
+        </ul>
+        <div class="spacer" aria-hidden="true"></div>
+    </div>
+</nav>
+  <div class="container">
+    <header>
+      <h1>Resume</h1>
+      <div class="controls">
+        <button id="refresh-btn" class="btn btn-primary">Refresh</button>
+        <button id="edit-btn" class="btn btn-secondary">Edit</button>
+        <button id="update-btn" class="btn btn-success" style="display: none;">Update</button>
+        <button id="stop-editing-btn" class="btn btn-secondary" style="display: none;">Stop Editing</button>
+      </div>
+    </header>
+    <main id="resume-container">
+      <div class="loading">Loading resume...</div>
+    </main>
+  </div>
+  <script src="resume.js"></script>
+</body>
+</html>

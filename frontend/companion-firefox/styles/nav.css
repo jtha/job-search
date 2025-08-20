@@ -1,0 +1,88 @@
+/* Top navigation bar styles (shared across extension pages) */
+:root {
+  /* Light by default to better match typical page styling */
+  --nav-bg: #ffffff;
+  --nav-fg: #111827; /* gray-900 */
+  --nav-muted: #6b7280; /* gray-500 */
+  --nav-accent: #2563eb; /* blue-600 */
+  --nav-border: rgba(0, 0, 0, 0.08);
+  --nav-height: 44px;
+}
+
+/* Optional dark mode override removed to keep nav light consistently */
+
+/* Ensure the nav sits flush with the top and edges */
+html, body { margin: 0; padding: 0; }
+
+.top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  height: var(--nav-height);
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--nav-border);
+  box-shadow: 0 1px 0 var(--nav-border);
+  /* Make the bar extend edge-to-edge even when the page body uses padding: 20px */
+  margin: -20px -20px 0 -20px;
+}
+
+.top-nav .nav-inner {
+  max-width: 900px; /* match page container for perfect alignment */
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+}
+
+.top-nav .brand {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--nav-muted);
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+
+.top-nav .nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.top-nav .nav-links a {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: var(--nav-fg);
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.top-nav .nav-links a:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.top-nav .nav-links a[aria-current="page"] {
+  color: var(--nav-fg);
+  background: rgba(0, 0, 0, 0.05); /* neutral subtle highlight */
+  outline: 1px solid rgba(0, 0, 0, 0.10);
+}
+
+.top-nav .spacer {
+  flex: 1 1 auto;
+}
+
+/* Optional: compact on small screens */
+@media (max-width: 480px) {
+  .top-nav .brand { display: none; }
+  .top-nav .nav-inner { gap: 8px; padding: 0 8px; }
+  .top-nav .nav-links a { padding: 0 10px; height: 32px; font-size: 13px; }
+}

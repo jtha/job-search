@@ -166,7 +166,9 @@ async def upsert_document(
     document_id: str,
     document_name: str,
     document_timestamp: int,
-    document_markdown: Optional[str] = None
+    document_markdown: Optional[str] = None,
+    document_job_id_reference: Optional[str] = None,
+    document_job_type: Optional[str] = None
 ):
     """
     Upserts a record into the document_store table.
@@ -212,63 +214,6 @@ async def upsert_run_finding(
     await db.commit()
     # logger.info(f"Upserted run_finding: ({job_run_id}, {job_id})")
 
-# --- Upsert for job_assessment ---
-async def upsert_job_assessment(
-    job_assessment_id: str,
-    job_id: str,
-    job_assessment_timestamp: int,
-    job_assessment_required_qualifications_matched_count: Optional[int] = None,
-    job_assessment_required_qualifications_count: Optional[int] = None,
-    job_assessment_additional_qualifications_matched_count: Optional[int] = None,
-    job_assessment_additional_qualifications_count: Optional[int] = None,
-    job_assessment_list_required_qualifications: Optional[str] = None,
-    job_assessment_list_matched_required_qualifications: Optional[str] = None,
-    job_assessment_list_additional_qualifications: Optional[str] = None,
-    job_assessment_list_matched_additional_qualifications: Optional[str] = None,
-    job_assessment_resume_document_id: Optional[str] = None,
-    job_assessment_prompt_document_id: Optional[str] = None
-):
-    """
-    Upserts a record into the job_assessment table.
-    """
-    db = await get_db()
-    await db.execute(
-        """
-        INSERT INTO job_assessment (
-            job_assessment_id, job_id, job_assessment_timestamp,
-            job_assessment_required_qualifications_matched_count, job_assessment_required_qualifications_count,
-            job_assessment_additional_qualifications_matched_count, job_assessment_additional_qualifications_count,
-            job_assessment_list_required_qualifications, job_assessment_list_matched_required_qualifications,
-            job_assessment_list_additional_qualifications, job_assessment_list_matched_additional_qualifications,
-            job_assessment_resume_document_id, job_assessment_prompt_document_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(job_assessment_id) DO UPDATE SET
-            job_id=excluded.job_id,
-            job_assessment_timestamp=excluded.job_assessment_timestamp,
-            job_assessment_required_qualifications_matched_count=excluded.job_assessment_required_qualifications_matched_count,
-            job_assessment_required_qualifications_count=excluded.job_assessment_required_qualifications_count,
-            job_assessment_additional_qualifications_matched_count=excluded.job_assessment_additional_qualifications_matched_count,
-            job_assessment_additional_qualifications_count=excluded.job_assessment_additional_qualifications_count,
-            job_assessment_list_required_qualifications=excluded.job_assessment_list_required_qualifications,
-            job_assessment_list_matched_required_qualifications=excluded.job_assessment_list_matched_required_qualifications,
-            job_assessment_list_additional_qualifications=excluded.job_assessment_list_additional_qualifications,
-            job_assessment_list_matched_additional_qualifications=excluded.job_assessment_list_matched_additional_qualifications,
-            job_assessment_resume_document_id=excluded.job_assessment_resume_document_id,
-            job_assessment_prompt_document_id=excluded.job_assessment_prompt_document_id;
-        """,
-        (
-            job_assessment_id, job_id, job_assessment_timestamp,
-            job_assessment_required_qualifications_matched_count, job_assessment_required_qualifications_count,
-            job_assessment_additional_qualifications_matched_count, job_assessment_additional_qualifications_count,
-            job_assessment_list_required_qualifications, job_assessment_list_matched_required_qualifications,
-            job_assessment_list_additional_qualifications, job_assessment_list_matched_additional_qualifications,
-            job_assessment_resume_document_id, job_assessment_prompt_document_id
-        )
-    )
-    await db.commit()
-    # logger.info(f"Upserted job_assessment: {job_assessment_id}")
-
-# --- Upsert for llm_models ---
 async def upsert_llm_model(
     model_id: str,
     model_name: str,

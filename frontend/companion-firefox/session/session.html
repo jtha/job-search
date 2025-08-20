@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Session</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="../styles/nav.css">
+  <link rel="stylesheet" href="session.css">
+</head>
+<body>
+  <nav class="top-nav" aria-label="Primary">
+    <div class="nav-inner">
+        <div class="brand">Job Search Copilot</div>
+        <ul class="nav-links" role="list">
+        <li><a href="../dashboard/dashboard.html">Dashboard</a></li>
+        <li><a href="../history/history.html">History</a></li>
+        <li><a href="../session/session.html" aria-current="page">Session</a></li>
+        <li><a href="../resume/resume.html">Resume</a></li>
+        </ul>
+        <div class="spacer" aria-hidden="true"></div>
+    </div>
+</nav>
+  <div class="container">
+    <header>
+      <h1>Session</h1>
+      <button id="clear-session-btn">Clear All Session Data</button>
+    </header>
+    <main id="job-list-container"></main>
+  </div>
+  <script src="session.js"></script>
+</body>
+</html>

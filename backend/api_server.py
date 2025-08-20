@@ -1,7 +1,11 @@
 from contextlib import asynccontextmanager
+import os
+from typing import Optional
 
 from fastapi import FastAPI, Body, HTTPException, Query
 from pydantic import BaseModel
+from dotenv import load_dotenv
+import httpx
 
 from .db import (
     Database,
@@ -18,7 +22,8 @@ from .db import (
     get_llm_models,
     get_recent_job_skills,
     get_prompts,
-    get_recent_assessed_jobs
+    get_recent_assessed_jobs,
+    get_document_master_resume
 )
 
 from .crawler import manual_extract
@@ -26,8 +31,6 @@ from .utilities import setup_logging, get_logger
 from .llm import (
     generate_job_assessment_with_id
 )
-
-# Pydantic Models
 
 class LinkedInScrapeRequest(BaseModel):
     keywords: list[str]
@@ -45,6 +48,8 @@ class DocumentUpsertRequest(BaseModel):
     document_name: str
     document_timestamp: int
     document_markdown: str | None = None
+    document_job_id_reference: Optional[str] = None
+    document_job_type: Optional[str] | None = None
 
 class LLMModelUpsertRequest(BaseModel):
     model_id: str
@@ -72,10 +77,10 @@ class HtmlPayload(BaseModel):
 class UpdateJobAppliedRequest(BaseModel):
     job_id: str
 
-# Initialization
-
 setup_logging()
 logger = get_logger(__name__)
+
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -96,8 +101,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
-# Endpoints
 
 @app.get("/")
 async def read_root():
@@ -133,6 +136,22 @@ async def get_jobs_recent_endpoint(
     limit: int = Query(300, gt=0, description="Maximum number of jobs to return.")
 ):
     return await get_recent_assessed_jobs(days_back=days_back, limit=limit)
+
+@app.get("/openrouter_credits", response_model=dict)
+async def get_openrouter_credits_endpoint():
+    url = "https://openrouter.ai/api/v1/credits"
+    headers = {
+        "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+        "Content-Type": "application/json"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        remaining_credits = response.json()['data']['total_credits'] - response.json()['data']['total_usage']
+    return {"remaining_credits": remaining_credits}
+
+@app.get("/master_resume", response_model=dict)
+async def get_master_resume_endpoint():
+    return await get_document_master_resume()
 
 @app.post("/document_store/upsert")
 async def upsert_document_endpoint(payload: DocumentUpsertRequest):
@@ -187,6 +206,11 @@ async def html_extract_endpoint(payload: HtmlPayload):
                 job_applied_timestamp=None
             )
             job_skills = await generate_job_assessment_with_id(extracted_data.get("job_id")) # type: ignore
+            
+            # Fetch the actual job record to get the real job_applied status
+            job_record = await get_job_detail_by_id(extracted_data.get("job_id")) # type: ignore
+            actual_job_applied = job_record.get("job_applied", 0) if job_record else 0
+            
             extracted_data["required_qualifications"] = [
                 {
                     "requirement":i['job_skills_atomic_string'],  # type: ignore
@@ -202,7 +226,9 @@ async def html_extract_endpoint(payload: HtmlPayload):
             extracted_data["evaluated_qualifications"] = [
                 {
                     "requirement":i['job_skills_atomic_string']  # type: ignore
-                } for i in job_skills if i.get("job_skills_type")=="evaluated_qualification"] # type: ignore            
+                } for i in job_skills if i.get("job_skills_type")=="evaluated_qualification"] # type: ignore
+            # Include actual job_applied status from database
+            extracted_data["job_applied"] = actual_job_applied
         return {"status": "success", "data": extracted_data}
     except Exception as e:
         logger.exception(f"Debug HTML content: \n\n{html_content}\n\n")
@@ -232,6 +258,7 @@ async def regenerate_job_assessment_endpoint(payload: RegenerateJobAssessmentReq
             "job_url": job.get("job_url"),
             "job_url_direct": job.get("job_url_direct"),
             "job_description": job.get("job_description"),
+            "job_applied": job.get("job_applied", 0),  # Include applied status
         }
         extracted_data["required_qualifications"] = [
             {

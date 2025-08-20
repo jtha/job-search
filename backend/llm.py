@@ -21,7 +21,6 @@ from .db import (
     get_job_details,
     upsert_llm_run_v2,
     upsert_job_skills,
-    delete_job_quarantine,
     get_job_skills_for_job
 )
 from .llm_examples import LLMExamples

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Job Search Copilot",
+  "version": "3.0",
+  "description": "Asynchronously extracts job data and tracks history.",
+  "icons": {
+    "48": "icons/icon-48.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_icon": "icons/icon-48.png",
+    "default_title": "Toggle Extractor"
+  },
+  "sidebar_action": {
+    "default_panel": "sidebar/sidebar.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; connect-src http://localhost:* http://127.0.0.1:*;"
+  }
+}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="../styles/nav.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <nav class="top-nav" aria-label="Primary">
+    <div class="nav-inner">
+        <div class="brand">Job Search Copilot</div>
+        <ul class="nav-links" role="list">
+        <li><a href="../dashboard/dashboard.html" aria-current="page">Dashboard</a></li>
+        <li><a href="../history/history.html">History</a></li>
+        <li><a href="../session/session.html">Session</a></li>
+        <li><a href="../resume/resume.html">Resume</a></li>
+        </ul>
+        <div class="spacer" aria-hidden="true"></div>
+    </div>
+</nav>
+  <div class="container">
+    <header>
+      <h1>Dashboard</h1>
+    </header>
+    <main id="dashboard-container">
+      <!-- Dashboard content will go here -->
+      <p>If you can see the navigation bar above, then the issue is with the JavaScript navigation generation.</p>
+      <p>If you can't see the navigation bar, then the issue is with the CSS or basic HTML structure.</p>
+    </main>
+  </div>
+  <script src="../shared/navigation.js"></script>
+  <script>
+    // Test if the script loads
+    console.log('Dashboard page loaded, navigation.js should be available');
+    console.log('initNavigation function exists:', typeof initNavigation);
+    
+    // Initialize navigation for this page
+    // initNavigation('dashboard');
+  </script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
