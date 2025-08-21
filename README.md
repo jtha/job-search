@@ -113,7 +113,17 @@ cp .env.example .env
 uv run python -m backend.db_init
 ```
 
-5. Load the Firefox extension:
+5. (One-time) Start the API server and seed prompt templates:
+```bash
+# In one terminal window start the API server
+uv run uvicorn backend.api_server:app --reload
+
+# In a second terminal window (after the server is accepting requests) seed the prompt templates
+uv run python -m backend.llm_prompts
+```
+Why this matters: the assessment pipeline depends on prompt templates stored in the `prompts` table. Running `backend.llm_prompts.py` populates the initial set of prompt versions used by the multi-step job assessment workflow. You only need to do this once (or again later if you add/modify prompt definitions in the script). If you skip this step, job assessment background tasks will fail because no prompt configurations will be found.
+
+6. Load the Firefox extension:
    - Open Firefox and navigate to `about:debugging`
    - Click "This Firefox" > "Load Temporary Add-on"
    - Navigate to `frontend/companion-firefox/` and select `manifest.json`
@@ -125,6 +135,13 @@ uv run python -m backend.db_init
 ```bash
 uv run uvicorn backend.api_server:app --reload
 ```
+
+#### (One-time) Seed Prompt Templates
+If you have not yet seeded the LLM prompt templates (or you have updated `backend/llm_prompts.py` and want to add new versions), run:
+```bash
+uv run python -m backend.llm_prompts
+```
+This script sends a series of POST requests to `POST /prompts/upsert` to populate the `prompts` table with the multi-stage assessment prompt set (tagging, atomic decomposition, classification, resume matching, etc.). After seeding, newly processed jobs can be fully assessed.
 
 #### Using the Firefox Extension
 
