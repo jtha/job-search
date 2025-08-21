@@ -113,15 +113,16 @@ cp .env.example .env
 uv run python -m backend.db_init
 ```
 
-5. (One-time) Start the API server and seed prompt templates:
+5. Start the API server (initial prompts will auto-seed on first run):
 ```bash
-# In one terminal window start the API server
 uv run uvicorn backend.api_server:app --reload
+```
+The server's startup process now performs an "insert-if-missing" seed of the required LLM prompt templates used by the assessment pipeline. This is idempotent—only absent `llm_run_type` prompts are inserted; existing ones are never modified. To disable automatic seeding set `INITIAL_PROMPT_SEED=0` in your environment.
 
-# In a second terminal window (after the server is accepting requests) seed the prompt templates
+Optional manual re-run (does the same insert-if-missing logic):
+```bash
 uv run python -m backend.llm_prompts
 ```
-Why this matters: the assessment pipeline depends on prompt templates stored in the `prompts` table. Running `backend.llm_prompts.py` populates the initial set of prompt versions used by the multi-step job assessment workflow. You only need to do this once (or again later if you add/modify prompt definitions in the script). If you skip this step, job assessment background tasks will fail because no prompt configurations will be found.
 
 6. Load the Firefox extension:
    - Open Firefox and navigate to `about:debugging`
@@ -136,12 +137,12 @@ Why this matters: the assessment pipeline depends on prompt templates stored in 
 uv run uvicorn backend.api_server:app --reload
 ```
 
-#### (One-time) Seed Prompt Templates
-If you have not yet seeded the LLM prompt templates (or you have updated `backend/llm_prompts.py` and want to add new versions), run:
+#### Prompt Templates
+On first startup the API automatically inserts any missing required prompt templates. If you add new initial run types to `backend/prompt_catalog_initial.py`, restart the server or run:
 ```bash
 uv run python -m backend.llm_prompts
 ```
-This script sends a series of POST requests to `POST /prompts/upsert` to populate the `prompts` table with the multi-stage assessment prompt set (tagging, atomic decomposition, classification, resume matching, etc.). After seeding, newly processed jobs can be fully assessed.
+This only inserts prompts that are missing; existing rows are preserved for future management by a separate module.
 
 #### Using the Firefox Extension
 

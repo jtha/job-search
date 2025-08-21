@@ -34,6 +34,7 @@ from .db import (
 from .crawler import manual_extract
 from .utilities import setup_logging, get_logger
 from .llm import generate_job_assessment_with_id
+from .prompt_seed import seed_initial_prompts
 
 class RegenerateJobAssessmentRequest(BaseModel):
     job_id: str
@@ -81,6 +82,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager to initialize the database."""
     logger.info("Starting application lifespan...")
     db_instance = await Database.get_instance()
+    # Phase 0: initial prompt seed (insert-only, one-time; safe idempotent)
+    if os.getenv("INITIAL_PROMPT_SEED", "1") == "1":
+        try:
+            result = await seed_initial_prompts()
+            logger.info(
+                "Prompt seed summary: inserted=%d existing=%d required=%d",
+                len(result.inserted_run_types),
+                len(result.existing_run_types),
+                result.total_required,
+            )
+        except Exception as e:
+            logger.error(f"Initial prompt seeding failed (continuing startup): {e}")
     # Phase 1: cleanup stale quarantine rows (jobs that now have assessments)
     try:
         removed = await cleanup_stale_quarantine()
