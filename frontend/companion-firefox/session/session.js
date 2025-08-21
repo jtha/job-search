@@ -48,6 +48,113 @@ const state = {
   decentOnly: false,
 };
 
+// Track which job rows are currently expanded so polling/rerenders don't collapse them
+const expandedRows = new Set();
+
+// Helper to populate (or re-populate) the details section for a job row
+function populateDetails(jobRow, task) {
+  const detailsContainer = jobRow.querySelector('.details-container');
+  if (!detailsContainer) return;
+  task.data.task_id = task.id; // ensure task id present for renderJobDetails
+  detailsContainer.innerHTML = renderJobDetails(task.data);
+  const uniquePrefix = `details-${task.id}-${task.data.job_id || 'no-job-id'}`;
+  const copyBtn = document.getElementById(`${uniquePrefix}-copy-btn`);
+  const descriptionEl = document.getElementById(`${uniquePrefix}-desc`);
+  const regenBtn = document.getElementById(`${uniquePrefix}-regen-btn`);
+  const regenStatusEl = document.getElementById(`${uniquePrefix}-regen-status`);
+  const appliedBtn = document.getElementById(`${uniquePrefix}-applied-btn`);
+
+  if (copyBtn && descriptionEl) {
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(descriptionEl.textContent).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+      }).catch(err => {
+        console.error('Failed to copy text: ', err);
+        copyBtn.textContent = 'Error!';
+      });
+    });
+  }
+
+  if (regenBtn && task.data?.job_id) {
+    regenBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (regenBtn.disabled) return;
+      regenBtn.disabled = true;
+      const originalText = regenBtn.textContent;
+      regenBtn.textContent = 'Regenerating...';
+      regenStatusEl.textContent = '';
+      try {
+        const resp = await regenerateAssessment(task.data.job_id);
+        if (resp.status === 'success') {
+          const start = Date.now();
+          const timeoutMs = 120000; // 2 minutes
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          let snapshot = null;
+          while (Date.now() - start < timeoutMs) {
+            snapshot = await getJobSnapshot(task.data.job_id);
+            if (snapshot && snapshot.assessed) break;
+            await sleep(3000);
+          }
+          if (snapshot) {
+            task.data = { ...task.data, ...snapshot };
+          }
+          task.data.task_id = task.id;
+          await browser.storage.local.set({ [task.id]: task });
+          populateDetails(jobRow, task); // re-render details
+          const updatedFr = computeFractionsFromTaskData(task.data);
+          const reqEl = jobRow.querySelector('.fraction-req');
+          const addEl = jobRow.querySelector('.fraction-add');
+          updateFractionEl(reqEl, 'Req', updatedFr.req.matched, updatedFr.req.total);
+          updateFractionEl(addEl, 'Add', updatedFr.add.matched, updatedFr.add.total);
+          regenStatusEl.textContent = 'Updated';
+        } else {
+          regenStatusEl.textContent = 'Failed';
+        }
+      } catch (err) {
+        console.error('Regenerate failed', err);
+        regenStatusEl.textContent = 'Error';
+      } finally {
+        regenBtn.disabled = false;
+        regenBtn.textContent = originalText;
+        setTimeout(() => { regenStatusEl.textContent = ''; }, 4000);
+      }
+    });
+  }
+
+  if (appliedBtn && task.data?.job_id) {
+    appliedBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (appliedBtn.disabled) return;
+      const originalText = appliedBtn.textContent;
+      const currentlyApplied = task.data.job_applied === 1 || task.data.job_applied === true;
+      appliedBtn.disabled = true;
+      appliedBtn.textContent = currentlyApplied ? 'Unmarking...' : 'Marking...';
+      try {
+        if (currentlyApplied) {
+          await unmarkApplied(task.data.job_id);
+          task.data.job_applied = 0;
+          appliedBtn.textContent = 'Applied to Job';
+          jobRow.classList.remove('applied');
+        } else {
+          await markApplied(task.data.job_id);
+          task.data.job_applied = 1;
+          appliedBtn.textContent = 'Unmark Applied';
+          jobRow.classList.add('applied');
+        }
+        await browser.storage.local.set({ [task.id]: task });
+      } catch (err) {
+        console.error('Toggle applied failed', err);
+        appliedBtn.textContent = 'Error';
+        setTimeout(() => { appliedBtn.textContent = originalText; appliedBtn.disabled = false; }, 3000);
+      } finally {
+        appliedBtn.disabled = false;
+      }
+    });
+  }
+}
+
 if (hideAppliedBtn) {
   hideAppliedBtn.addEventListener('click', () => {
     state.hideApplied = !state.hideApplied;
@@ -472,165 +579,17 @@ function renderJob(task) {
         
         detailsContainer.style.display = 'none';
         jobRow.classList.remove('expanded');
+        expandedRows.delete(task.id);
         return;
       }
       
       // If not expanded, clicking anywhere in the row expands it
       if (!detailsContainer.innerHTML) {
-        task.data.task_id = task.id;
-        detailsContainer.innerHTML = renderJobDetails(task.data);
-        const uniquePrefix = `details-${task.id}-${task.data.job_id || 'no-job-id'}`;
-        const copyBtn = document.getElementById(`${uniquePrefix}-copy-btn`);
-        const descriptionEl = document.getElementById(`${uniquePrefix}-desc`);
-        const regenBtn = document.getElementById(`${uniquePrefix}-regen-btn`);
-        const regenStatusEl = document.getElementById(`${uniquePrefix}-regen-status`);
-        const appliedBtn = document.getElementById(`${uniquePrefix}-applied-btn`);
-
-        if (copyBtn && descriptionEl) {
-          copyBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            navigator.clipboard.writeText(descriptionEl.textContent).then(() => {
-              copyBtn.textContent = 'Copied!';
-              setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-            }).catch(err => {
-              console.error('Failed to copy text: ', err);
-              copyBtn.textContent = 'Error!';
-            });
-          });
-        }
-
-        if (regenBtn && task.data?.job_id) {
-          regenBtn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            if (regenBtn.disabled) return;
-            regenBtn.disabled = true;
-            const originalText = regenBtn.textContent;
-            regenBtn.textContent = 'Regenerating...';
-            regenStatusEl.textContent = '';
-            try {
-              const resp = await regenerateAssessment(task.data.job_id);
-              if (resp.status === 'success') {
-                // Poll until assessed
-                const start = Date.now();
-                const timeoutMs = 120000; // 2 minutes
-                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-                let snapshot = null;
-                while (Date.now() - start < timeoutMs) {
-                  snapshot = await getJobSnapshot(task.data.job_id);
-                  if (snapshot && snapshot.assessed) break;
-                  await sleep(3000);
-                }
-                if (snapshot) {
-                  task.data = { ...task.data, ...snapshot };
-                }
-                task.data.task_id = task.id;
-                await browser.storage.local.set({ [task.id]: task });
-                detailsContainer.innerHTML = renderJobDetails(task.data);
-                const newCopyBtn = document.getElementById(`${uniquePrefix}-copy-btn`);
-                const newDescriptionEl = document.getElementById(`${uniquePrefix}-desc`);
-                const newRegenBtn = document.getElementById(`${uniquePrefix}-regen-btn`);
-                const newRegenStatusEl = document.getElementById(`${uniquePrefix}-regen-status`);
-                const newAppliedBtn = document.getElementById(`${uniquePrefix}-applied-btn`);
-                if (newCopyBtn && newDescriptionEl) {
-                  newCopyBtn.addEventListener('click', (e2) => {
-                    e2.stopPropagation();
-                    navigator.clipboard.writeText(newDescriptionEl.textContent).then(() => {
-                      newCopyBtn.textContent = 'Copied!';
-                      setTimeout(() => { newCopyBtn.textContent = 'Copy'; }, 2000);
-                    }).catch(err => {
-                      console.error('Failed to copy text: ', err);
-                      newCopyBtn.textContent = 'Error!';
-                    });
-                  });
-                }
-                if (newRegenBtn) {
-                  newRegenBtn.addEventListener('click', (e3) => {
-                    e3.stopPropagation();
-                  });
-                }
-                if (newAppliedBtn && task.data?.job_id) {
-                  newAppliedBtn.addEventListener('click', async (e4) => {
-                    e4.stopPropagation();
-                    if (newAppliedBtn.disabled) return;
-                    const originalText2 = newAppliedBtn.textContent;
-                    const currentlyApplied = task.data.job_applied === 1 || task.data.job_applied === true;
-                    newAppliedBtn.disabled = true;
-                    newAppliedBtn.textContent = currentlyApplied ? 'Unmarking...' : 'Marking...';
-                    try {
-                      if (currentlyApplied) {
-                        await unmarkApplied(task.data.job_id);
-                        task.data.job_applied = 0;
-                        newAppliedBtn.textContent = 'Applied to Job';
-                        jobRow.classList.remove('applied');
-                      } else {
-                        await markApplied(task.data.job_id);
-                        task.data.job_applied = 1;
-                        newAppliedBtn.textContent = 'Unmark Applied';
-                        jobRow.classList.add('applied');
-                      }
-                      await browser.storage.local.set({ [task.id]: task });
-                    } catch (err) {
-                      console.error('Toggle applied failed', err);
-                      newAppliedBtn.textContent = 'Error';
-                      setTimeout(() => { newAppliedBtn.textContent = originalText2; newAppliedBtn.disabled = false; }, 3000);
-                    } finally {
-                      newAppliedBtn.disabled = false;
-                    }
-                  });
-                }
-                const updatedFr = computeFractionsFromTaskData(task.data);
-                const reqEl = jobRow.querySelector('.fraction-req');
-                const addEl = jobRow.querySelector('.fraction-add');
-                updateFractionEl(reqEl, 'Req', updatedFr.req.matched, updatedFr.req.total);
-                updateFractionEl(addEl, 'Add', updatedFr.add.matched, updatedFr.add.total);
-                regenStatusEl.textContent = 'Updated';
-              } else {
-                regenStatusEl.textContent = 'Failed';
-              }
-            } catch (err) {
-              console.error('Regenerate failed', err);
-              regenStatusEl.textContent = 'Error';
-            } finally {
-              regenBtn.disabled = false;
-              regenBtn.textContent = originalText;
-              setTimeout(() => { regenStatusEl.textContent = ''; }, 4000);
-            }
-          });
-        }
-
-        if (appliedBtn && task.data?.job_id) {
-          appliedBtn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            if (appliedBtn.disabled) return;
-            const originalText = appliedBtn.textContent;
-            const currentlyApplied = task.data.job_applied === 1 || task.data.job_applied === true;
-            appliedBtn.disabled = true;
-            appliedBtn.textContent = currentlyApplied ? 'Unmarking...' : 'Marking...';
-            try {
-              if (currentlyApplied) {
-                await unmarkApplied(task.data.job_id);
-                task.data.job_applied = 0;
-                appliedBtn.textContent = 'Applied to Job';
-                jobRow.classList.remove('applied');
-              } else {
-                await markApplied(task.data.job_id);
-                task.data.job_applied = 1;
-                appliedBtn.textContent = 'Unmark Applied';
-                jobRow.classList.add('applied');
-              }
-              await browser.storage.local.set({ [task.id]: task });
-            } catch (err) {
-              console.error('Toggle applied failed', err);
-              appliedBtn.textContent = 'Error';
-              setTimeout(() => { appliedBtn.textContent = originalText; appliedBtn.disabled = false; }, 3000);
-            } finally {
-              appliedBtn.disabled = false;
-            }
-          });
-        }
+        populateDetails(jobRow, task);
       }
       detailsContainer.style.display = 'block';
       jobRow.classList.add('expanded');
+      expandedRows.add(task.id);
     });
   }
 
@@ -660,6 +619,26 @@ async function renderAllJobs() {
   for (const task of sortedTasks) {
     const jobElement = renderJob(task);
     jobListContainer.appendChild(jobElement);
+    // Restore expansion state if this row was previously expanded
+    if (expandedRows.has(task.id)) {
+      const detailsContainer = jobElement.querySelector('.details-container');
+      if (detailsContainer) {
+        if (!detailsContainer.innerHTML) {
+          populateDetails(jobElement, task);
+        }
+        detailsContainer.style.display = 'block';
+        jobElement.classList.add('expanded');
+      } else {
+        // If we can't find container, remove from expanded set to avoid leaks
+        expandedRows.delete(task.id);
+      }
+    }
+  }
+
+  // Prune any expanded ids that no longer exist
+  const currentIds = new Set(sortedTasks.map(t => t.id));
+  for (const id of Array.from(expandedRows)) {
+    if (!currentIds.has(id)) expandedRows.delete(id);
   }
 }
 
@@ -680,7 +659,7 @@ document.addEventListener('DOMContentLoaded', renderAllJobs);
 
 // --- Background polling to resolve stuck "Processing..." ---
 let pollTimer = null;
-const POLL_INTERVAL_MS = 15000; // 15s
+const POLL_INTERVAL_MS = 30000; // 30s (doubled from 15s to reduce polling frequency)
 const MAX_PARALLEL_POLLS = 5;
 
 async function getJobSnapshot(jobId) {
