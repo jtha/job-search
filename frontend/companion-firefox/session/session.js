@@ -68,7 +68,7 @@ function createQualificationTable(title, qualificationsArray, headers) {
   if (!qualificationsArray || qualificationsArray.length === 0) return '';
   let matchFraction = '';
   if (headers.length === 3) {
-    const totalMatches = qualificationsArray.filter(item => item.match === 1).length;
+    const totalMatches = qualificationsArray.filter(item => item.match === 1 || item.match === true).length;
     const totalRequirements = qualificationsArray.length;
     matchFraction = `<span class="match-fraction">(${totalMatches}/${totalRequirements})</span>`;
   }
@@ -80,7 +80,7 @@ function createQualificationTable(title, qualificationsArray, headers) {
     tableHtml += '<tr>';
     if (headers.includes('Requirement')) tableHtml += `<td>${item.requirement || 'N/A'}</td>`;
     if (headers.includes('Match')) {
-      const isMatch = item.match === 1;
+      const isMatch = item.match === 1 || item.match === true;
       const matchText = isMatch ? 'Yes' : 'No';
       const matchClass = isMatch ? 'match-yes' : 'match-no';
       tableHtml += `<td class="${matchClass}">${matchText}</td>`;
@@ -246,38 +246,205 @@ function updateFractionEl(el, label, matched, total) {
   el.classList.add(getFractionClass(matched, total));
 }
 
+// Helpers to format timestamps coming from different sources (seconds, ms, ISO strings)
+function parseFlexibleTimestamp(v) {
+  if (v == null) return null;
+  // numbers may be seconds or milliseconds
+  if (typeof v === 'number') {
+    // If it's clearly milliseconds (large), use directly
+    if (v > 1e12) return new Date(v);
+    // If it looks like a unix seconds timestamp (e.g. ~1e9), convert to ms
+    if (v > 1e9) return new Date(v * 1000);
+    // small numbers: treat as ms by default
+    return new Date(v);
+  }
+  // strings: try ISO parse first, then numeric
+  if (typeof v === 'string') {
+    const n = Date.parse(v);
+    if (!isNaN(n)) return new Date(n);
+    const asNum = Number(v);
+    if (!isNaN(asNum)) return parseFlexibleTimestamp(asNum);
+    return null;
+  }
+  if (v instanceof Date) return v;
+  return null;
+}
+
+function formatTimeForTask(task) {
+  // Prefer last_assessed_at from task.data (like history.js), then fall back to completedAt/submittedAt
+  const lastAssessed = task?.data?.last_assessed_at;
+  if (lastAssessed) {
+    const ts = parseFlexibleTimestamp(lastAssessed * (lastAssessed > 1e12 ? 1 : 1000));
+    if (ts) return ts.toLocaleString();
+  }
+  // Fallbacks
+  const possibleCompleted = task.completedAt || task?.data?.completed_at || task?.data?.completedAt;
+  const completedDate = parseFlexibleTimestamp(possibleCompleted);
+  if (completedDate) return completedDate.toLocaleString();
+  const possibleSubmitted = task.submittedAt || task?.data?.submitted_at || task?.data?.submittedAt;
+  const submittedDate = parseFlexibleTimestamp(possibleSubmitted);
+  if (submittedDate) return submittedDate.toLocaleString();
+  return '';
+}
+
 function renderJob(task) {
   const jobRow = document.createElement('div');
   jobRow.className = 'job-row';
   jobRow.id = task.id;
+
+  const staleQuarantine = task?.data?.stale_quarantine === true;
+  const isFailed = (task?.data?.failed === true || task.status === 'error') && !staleQuarantine;
+  if (isFailed) {
+    jobRow.classList.add('job-failed');
+  }
 
   const title = task.data?.job_title || (task.status === 'completed' ? 'Untitled' : 'Processing...');
   const company = task.data?.job_company || '';
   const location = task.data?.job_location || '';
   const displayTitle = company ? `${title} at ${company}` : title;
 
-  const when = task.completedAt || task.submittedAt || '';
-  const whenText = when ? new Date(when).toLocaleString() : '';
+  const isAnalyzing = task?.data?.assessed === false && !isFailed; // don't show analyzing if failed
+  const showFractions = task?.data?.assessed === true && !isFailed; // hide fractions if failed
+  const analyzingTagHtml = isAnalyzing
+    ? '<span class="analyzing-tag" title="Assessment in progress" style="margin-right:8px; padding:2px 6px; border-radius:10px; background:#f5f5f5; color:#666; font-size:12px;">Analyzing…</span>'
+    : '';
+    const failedReason = task?.data?.quarantine_reason || task?.data?.failed_reason || 'Assessment failed';
+    const failedTagHtml = isFailed
+      ? `<span class="failed-tag" data-failed-reason="${encodeURIComponent(failedReason)}" style="margin-right:8px; padding:2px 6px; border-radius:10px; background:#ffe5e5; color:#b30000; font-size:12px; cursor:pointer;">Failed</span>`
+      : '';
 
   const fr = computeFractionsFromTaskData(task.data || {});
   const reqClass = getFractionClass(fr.req.matched, fr.req.total);
   const addClass = getFractionClass(fr.add.matched, fr.add.total);
-
-  jobRow.innerHTML = `
-    <div class="row-header">
-      <div class="row-title">${displayTitle}</div>
-      <div class="row-right">
+  const fractionsHtml = showFractions
+    ? `
         <div class="row-fractions">
           <span class="fraction fraction-req ${reqClass}" title="Required matched/total">Req: (${fr.req.matched}/${fr.req.total})</span>
           <span class="fraction fraction-add ${addClass}" title="Additional matched/total">Add: (${fr.add.matched}/${fr.add.total})</span>
         </div>
-  <span class="status-dot status-${task.status}" title="${task.status}"></span>
+      `
+    : '';
+
+  const whenText = formatTimeForTask(task);
+  jobRow.innerHTML = `
+    <div class="row-header">
+      <div class="row-title">${displayTitle}</div>
+      <div class="row-right">
+        ${fractionsHtml}
+        ${analyzingTagHtml}
+        ${failedTagHtml}
+        <span class="status-dot status-${task.status}" title="${task.status}"></span>
         <div class="row-location">${location || 'N/A'}</div>
       </div>
     </div>
     <div class="row-submeta">${whenText}</div>
     <div class="details-container"></div>
   `;
+
+  // Attach popup for failed reason
+  if (isFailed || staleQuarantine) {
+    const failedEl = jobRow.querySelector('.failed-tag');
+    if (failedEl) {
+  const popupId = `${jobRow.id}-failed-popup`;
+  let existing = document.getElementById(popupId);
+  if (existing) existing.remove();
+  const popup = document.createElement('div');
+  popup.id = popupId;
+  popup.className = 'failed-popup';
+  popup.style.display = 'none';
+  popup.style.position = 'absolute';
+  popup.style.zIndex = '9999';
+  popup.style.maxWidth = '360px';
+  popup.style.background = '#fff';
+  popup.style.border = '1px solid #e0b4b4';
+  popup.style.boxShadow = '0 4px 14px rgba(0,0,0,0.2)';
+  popup.style.padding = '12px 14px';
+  popup.style.fontSize = '12px';
+  popup.style.lineHeight = '1.4';
+  popup.style.borderRadius = '6px';
+  popup.style.pointerEvents = 'auto';
+  popup.style.transition = 'opacity 0.12s ease';
+      const reasonDecoded = decodeURIComponent(failedEl.getAttribute('data-failed-reason'));
+  const headingColor = isFailed ? '#b30000' : '#036';
+  const headingText = isFailed ? 'Failure Reason' : 'Previous Failure';
+  popup.innerHTML = `<strong style="color:#b30000;">Failure Reason</strong><br>${reasonDecoded}<div style="margin-top:8px; text-align:right;"><button class="retry-btn" style="background:#b30000; color:#fff; padding:4px 8px; border:none; border-radius:4px; cursor:pointer;">Retry</button></div>`;
+      document.body.appendChild(popup);
+
+      function positionPopup() {
+        const rect = failedEl.getBoundingClientRect();
+        const scrollY = window.scrollY || document.documentElement.scrollTop;
+        const scrollX = window.scrollX || document.documentElement.scrollLeft;
+        const top = rect.top + scrollY + rect.height + 6; // below badge
+        let left = rect.left + scrollX;
+        // If going off right edge, shift left
+        const popupWidth = Math.min(360, window.innerWidth - 20);
+        popup.style.width = popupWidth + 'px';
+        if (left + popupWidth > scrollX + window.innerWidth - 10) {
+          left = scrollX + window.innerWidth - popupWidth - 10;
+        }
+        // If near bottom viewport, show above
+        if (top + 200 > scrollY + window.innerHeight) {
+          popup.style.top = (rect.top + scrollY - 10 - 180) + 'px';
+        } else {
+          popup.style.top = top + 'px';
+        }
+        popup.style.left = left + 'px';
+      }
+
+      failedEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (popup.style.display === 'none') {
+          positionPopup();
+          popup.style.opacity = '0';
+          popup.style.display = 'block';
+          requestAnimationFrame(() => { popup.style.opacity = '1'; });
+        } else {
+          popup.style.display = 'none';
+        }
+      });
+      window.addEventListener('resize', () => { if (popup.style.display === 'block') positionPopup(); });
+      window.addEventListener('scroll', () => { if (popup.style.display === 'block') positionPopup(); }, true);
+      document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== failedEl) {
+          popup.style.display = 'none';
+        }
+      });
+  const retryBtn = popup.querySelector('.retry-btn');
+  if (retryBtn && task?.data?.job_id && isFailed) {
+        retryBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          retryBtn.disabled = true;
+          retryBtn.textContent = 'Retrying...';
+          try {
+            const resp = await regenerateAssessment(task.data.job_id);
+            if (resp.status === 'success') {
+              // Reset failed state locally to resume polling
+              task.status = 'pending';
+              task.data.failed = false;
+              task.data.failed_reason = null;
+              task.data.assessed = false;
+              await browser.storage.local.set({ [task.id]: task });
+              popup.style.display = 'none';
+            } else {
+              retryBtn.textContent = 'Failed';
+            }
+          } catch (err) {
+            console.error('Retry failed', err);
+            retryBtn.textContent = 'Error';
+            setTimeout(() => { retryBtn.textContent = 'Retry'; retryBtn.disabled = false; }, 3000);
+          } finally {
+            retryBtn.disabled = false;
+          }
+        });
+      }
+    }
+  }
+
+  if (isAnalyzing) {
+    jobRow.style.opacity = '0.6';
+  } else if (isFailed) {
+    jobRow.style.opacity = '0.8';
+  }
 
   const header = jobRow.querySelector('.row-header');
   const detailsContainer = jobRow.querySelector('.details-container');
@@ -342,8 +509,20 @@ function renderJob(task) {
             regenStatusEl.textContent = '';
             try {
               const resp = await regenerateAssessment(task.data.job_id);
-              if (resp.status === 'success' && resp.data) {
-                task.data = resp.data;
+              if (resp.status === 'success') {
+                // Poll until assessed
+                const start = Date.now();
+                const timeoutMs = 120000; // 2 minutes
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                let snapshot = null;
+                while (Date.now() - start < timeoutMs) {
+                  snapshot = await getJobSnapshot(task.data.job_id);
+                  if (snapshot && snapshot.assessed) break;
+                  await sleep(3000);
+                }
+                if (snapshot) {
+                  task.data = { ...task.data, ...snapshot };
+                }
                 task.data.task_id = task.id;
                 await browser.storage.local.set({ [task.id]: task });
                 detailsContainer.innerHTML = renderJobDetails(task.data);
@@ -498,3 +677,84 @@ clearSessionBtn.addEventListener('click', async () => {
 });
 
 document.addEventListener('DOMContentLoaded', renderAllJobs);
+
+// --- Background polling to resolve stuck "Processing..." ---
+let pollTimer = null;
+const POLL_INTERVAL_MS = 15000; // 15s
+const MAX_PARALLEL_POLLS = 5;
+
+async function getJobSnapshot(jobId) {
+  try {
+    const resp = await fetch(`http://127.0.0.1:8000/job/${encodeURIComponent(jobId)}`);
+    if (!resp.ok) return null;
+    const body = await resp.json();
+    if (body?.status !== 'success' || !body.data) return null;
+    // If backend says failed, return snapshot that marks error state to stop further polling
+    if (body.data.failed === true) {
+      return { ...body.data, assessed: false, failed: true };
+    }
+    return body.data;
+  } catch (e) {
+    console.warn('getJobSnapshot failed for', jobId, e);
+    return null;
+  }
+}
+
+async function pollIncompleteTasks() {
+  const all = await browser.storage.local.get(null);
+  const tasks = Object.values(all);
+  const pending = tasks.filter(t => {
+    if (!t || !t?.data?.job_id) return false;
+    if (t?.data?.failed === true || t.status === 'error') return false;
+    const assessed = t?.data?.assessed === true;
+    return t.status !== 'completed' || !assessed;
+  });
+  if (pending.length === 0) return;
+
+  let index = 0;
+  const workers = Array.from({ length: Math.min(MAX_PARALLEL_POLLS, pending.length) }, async () => {
+    while (index < pending.length) {
+      const i = index++;
+      const task = pending[i];
+      const jobId = task.data.job_id;
+      const snap = await getJobSnapshot(jobId);
+      if (!snap) continue;
+
+      const updated = { ...task, data: { ...task.data, ...snap } };
+      if (snap.failed === true) {
+        updated.status = 'error';
+        updated.error = 'Assessment failed';
+        await browser.storage.local.set({ [updated.id]: updated });
+        continue; // do not mark completed, and skip further processing
+      }
+
+      if (snap.assessed === true) {
+        updated.status = 'completed';
+        updated.completedAt = new Date().toISOString();
+      }
+      await browser.storage.local.set({ [updated.id]: updated });
+    }
+  });
+  await Promise.all(workers);
+}
+
+function startPolling() {
+  if (pollTimer) return; // already running
+  // Initial quick poll, then interval
+  pollIncompleteTasks().catch(() => {});
+  pollTimer = setInterval(() => {
+    pollIncompleteTasks().catch(() => {});
+  }, POLL_INTERVAL_MS);
+}
+
+// Kick off polling when the page script loads
+startPolling();
+
+// Optionally expose a manual function to mark failure and persist
+async function markTaskFailed(taskId, reason='Assessment failed') {
+  const all = await browser.storage.local.get(taskId);
+  const task = all[taskId];
+  if (!task) return;
+  const updated = { ...task, status: 'error', data: { ...task.data, failed: true, failed_reason: reason, quarantine_reason: reason } };
+  await browser.storage.local.set({ [taskId]: updated });
+}

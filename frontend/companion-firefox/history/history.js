@@ -435,8 +435,25 @@ function renderJobRow(job, skillsMap) {
             regenStatusEl.textContent = '';
             try {
               const resp = await regenerateAssessment(job.job_id);
-              if (resp.status === 'success' && resp.data) {
-                // Invalidate cache and refetch recent skills
+              if (resp.status === 'success') {
+                // Poll job snapshot until assessed, then refresh skills cache
+                const start = Date.now();
+                const timeoutMs = 120000; // 2 minutes
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                let snapshot = null;
+                while (Date.now() - start < timeoutMs) {
+                  try {
+                    const r = await fetch(`http://127.0.0.1:8000/job/${encodeURIComponent(job.job_id)}`);
+                    if (r.ok) {
+                      const b = await r.json();
+                      snapshot = b?.data || null;
+                      if (snapshot?.assessed) break;
+                    }
+                  } catch {}
+                  await sleep(3000);
+                }
+
+                // Invalidate cache and refetch
                 state.skillsByJob = null;
                 state.skillsCacheByDays.clear();
                 const currentDaysBack2 = Math.max(1, parseInt(daysBackInput.value || '5', 10));
@@ -444,7 +461,14 @@ function renderJobRow(job, skillsMap) {
                 const updatedSkills = state.skillsByJob.get(job.job_id) || [];
                 const updatedSections = mapSkillsToSections(updatedSkills);
                 const updatedData = {
-                  ...resp.data,
+                  job_id: job.job_id,
+                  job_title: snapshot?.job_title ?? job.job_title,
+                  job_company: snapshot?.job_company ?? job.job_company,
+                  job_location: snapshot?.job_location ?? job.job_location,
+                  job_salary: snapshot?.job_salary ?? job.job_salary,
+                  job_url: snapshot?.job_url ?? job.job_url,
+                  job_url_direct: snapshot?.job_url_direct ?? job.job_url_direct,
+                  job_description: snapshot?.job_description ?? job.job_description,
                   required_qualifications: updatedSections.required,
                   additional_qualifications: updatedSections.additional,
                   evaluated_qualifications: updatedSections.evaluated,

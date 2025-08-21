@@ -539,6 +539,48 @@ async def get_job_quarantine() -> list[str]:
         if not rows:
             return []
         return [row["job_id"] for row in rows]
+
+async def is_job_quarantined(job_id: str) -> bool:
+    """
+    Returns True if the given job_id exists in job_quarantine.
+    """
+    db = await get_db()
+    async with db.execute("SELECT 1 FROM job_quarantine WHERE job_id = ? LIMIT 1", (job_id,)) as cursor:
+        row = await cursor.fetchone()
+        return row is not None
+
+async def get_last_assessed_at(job_id: str) -> Optional[int]:
+    """Return the latest llm_run_end (epoch seconds) for a job_id from llm_runs_v2, or None."""
+    db = await get_db()
+    async with db.execute(
+        "SELECT MAX(CAST(llm_run_end AS INTEGER)) AS last_ts FROM llm_runs_v2 WHERE job_id = ?",
+        (job_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        if row and row["last_ts"] is not None:
+            return int(row["last_ts"])
+        return None
+
+async def get_latest_quarantine(job_id: str) -> Optional[dict]:
+    """Return the most recent quarantine record for a job_id with reason and timestamp."""
+    db = await get_db()
+    async with db.execute(
+        """
+        SELECT job_quarantine_reason, job_quarantine_timestamp
+        FROM job_quarantine
+        WHERE job_id = ?
+        ORDER BY job_quarantine_timestamp DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "job_quarantine_reason": row["job_quarantine_reason"],
+                "job_quarantine_timestamp": row["job_quarantine_timestamp"],
+            }
+        return None
     
 async def get_job_ids_without_assessment() -> list[dict]:
     """
@@ -698,4 +740,33 @@ async def delete_job_skills_by_job_id(job_id: str):
     )
     await db.commit()
     logger.info(f"Deleted job_skills for job_id: {job_id}")
+
+async def cleanup_stale_quarantine() -> int:
+    """Delete quarantine rows for jobs that now have skills (assessment exists).
+    Returns number of quarantine rows deleted.
+    """
+    db = await get_db()
+    # Find job_ids that have both skills and quarantine rows
+    async with db.execute(
+        """
+        SELECT DISTINCT q.job_id
+        FROM job_quarantine q
+        INNER JOIN job_skills s ON s.job_id = q.job_id
+        """
+    ) as cursor:
+        rows = await cursor.fetchall()
+        stale_ids = [r["job_id"] for r in rows]
+    deleted = 0
+    if stale_ids:
+        # Use executemany for efficiency
+        await db.executemany(
+            "DELETE FROM job_quarantine WHERE job_id = ?",
+            [(jid,) for jid in stale_ids]
+        )
+        await db.commit()
+        deleted = len(stale_ids)
+        logger.info(f"cleanup_stale_quarantine: removed quarantine rows for {deleted} job(s): {stale_ids}")
+    else:
+        logger.info("cleanup_stale_quarantine: no stale quarantine rows found")
+    return deleted
 

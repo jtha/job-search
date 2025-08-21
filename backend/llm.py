@@ -11,6 +11,7 @@ from typing import Type
 from dotenv import load_dotenv
 import httpx
 from pydantic import BaseModel, Field
+import json_repair
 
 from .utilities import setup_logging, get_logger
 from .db import (
@@ -76,6 +77,14 @@ headers = {
     "Content-Type": "application/json"
 }
 
+# HTTP timeout and retry configuration (env-overridable)
+DEFAULT_HTTP_READ_TIMEOUT = float(os.getenv("LLM_HTTP_TIMEOUT", "180"))  # seconds
+DEFAULT_HTTP_CONNECT_TIMEOUT = float(os.getenv("LLM_HTTP_CONNECT_TIMEOUT", "30"))
+DEFAULT_HTTP_WRITE_TIMEOUT = float(os.getenv("LLM_HTTP_WRITE_TIMEOUT", "180"))
+DEFAULT_HTTP_POOL_TIMEOUT = float(os.getenv("LLM_HTTP_POOL_TIMEOUT", "30"))
+DEFAULT_HTTP_MAX_RETRIES = int(os.getenv("LLM_HTTP_MAX_RETRIES", "2"))
+DEFAULT_HTTP_BACKOFF_BASE = float(os.getenv("LLM_HTTP_BACKOFF_BASE", "0.75"))  # seconds
+
 async def fetch_response(
     content: str, 
     system_instructions: str, 
@@ -83,9 +92,58 @@ async def fetch_response(
     temperature: float, 
     response_schema: Type[BaseModel], 
     max_reasoning_tokens: Optional[int] = 2000,
-    examples: Optional[List[dict]] = None):
+    examples: Optional[List[dict]] = None,
+    timeout_read: Optional[float] = None,
+    timeout_connect: Optional[float] = None,
+    timeout_write: Optional[float] = None,
+    max_retries: Optional[int] = None):
+    """Call the OpenRouter chat completions endpoint with a JSON schema enforced response.
 
-    logger.debug(f"Fetching response from OpenRouter for model {model} with temperature {temperature} and max reasoning tokens {max_reasoning_tokens}")
+    This function:
+      * Assembles the messages (system + optional few-shot examples + user)
+      * Specifies a JSON schema (pydantic model) the model must conform to
+      * Implements retry logic for transient network/server errors with exponential backoff
+      * Attempts several lightweight repairs of model output (code fences, key aliases, category normalization)
+      * Validates (or re-validates) the repaired JSON against the provided pydantic schema
+
+    Parameters
+    ----------
+    content : str
+        The user message / main prompt content.
+    system_instructions : str
+        The system prompt / instructions.
+    model : str
+        Model identifier (OpenRouter routing string).
+    temperature : float
+        Sampling temperature.
+    response_schema : Type[BaseModel]
+        Pydantic model that constrains and validates the JSON response.
+    max_reasoning_tokens : Optional[int]
+        Reserved reasoning token budget passed to provider (if applicable).
+    examples : Optional[List[dict]]
+        Few-shot example messages (each item must have role+content as expected by API).
+    timeout_read / timeout_connect / timeout_write : Optional[float]
+        Optional overrides for httpx timeout phases (seconds).
+    max_retries : Optional[int]
+        Override for number of retry attempts on transient failures.
+
+    Returns
+    -------
+    dict
+        Raw (repaired if needed) JSON response object from OpenRouter with validated content.
+
+    Raises
+    ------
+    ValueError
+        If the response cannot be validated against the schema after repair attempts.
+    httpx.HTTPError
+        For non-retriable HTTP failures.
+    """
+
+    logger.debug(
+        "Fetching response from OpenRouter for model %s (temp=%s, max_reasoning_tokens=%s)",
+        model, temperature, max_reasoning_tokens
+    )
 
     messages = [{"role": "system", "content": system_instructions}]
     if examples:
@@ -102,31 +160,169 @@ async def fetch_response(
             "type": "json_schema",
             "json_schema": response_schema.model_json_schema(),
         },
-        "provider": {
-            "order": ["deepinfra/fp4","nebius/fp4","fireworks"],
-            "allow_fallbacks": False,
-            "require_parameters": True
-        },
+        # "provider": {
+        #     "order": ["fireworks","together","openai","ncompass"],
+        #     "allow_fallbacks": True,
+        #     "require_parameters": True
+        # },
         "usage": {
             "include": True
         },
         "temperature": temperature
     }
 
-    async with httpx.AsyncClient() as client:
+    # Determine effective timeouts and retries
+    read_t = timeout_read if timeout_read is not None else DEFAULT_HTTP_READ_TIMEOUT
+    conn_t = timeout_connect if timeout_connect is not None else DEFAULT_HTTP_CONNECT_TIMEOUT
+    write_t = timeout_write if timeout_write is not None else DEFAULT_HTTP_WRITE_TIMEOUT
+    retries = DEFAULT_HTTP_MAX_RETRIES if max_retries is None else max_retries
+
+    def _strip_code_fences(s: str) -> str:
+        s_strip = s.strip()
+        if s_strip.startswith("```") and s_strip.endswith("```"):
+            s_strip = s_strip.strip("`")
+            # After stripping backticks, there may be a leading language tag like 'json' and a newline
+            lines = s_strip.splitlines()
+            if lines and lines[0].strip().lower() in {"json", "json5", "javascript"}:
+                s_strip = "\n".join(lines[1:])
+            return s_strip
+        return s
+
+    def _normalize_categories(val: Optional[str]) -> Optional[str]:
+        if val is None:
+            return None
+        v = str(val).strip().lower()
+        if v in {"required", "must", "mandatory"}:
+            return "required"
+        if v in {"additional", "nice to have", "desired", "preferred", "plus"}:
+            return "additional"
+        return val
+
+    def _normalize_classification(val: Optional[str]) -> Optional[str]:
+        if val is None:
+            return None
+        v = str(val).strip().lower()
+        mapping = {
+            "required": "required_qualification",
+            "additional": "additional_qualification",
+            "evaluated": "evaluated_qualification",
+            "required_qualification": "required_qualification",
+            "additional_qualification": "additional_qualification",
+            "evaluated_qualification": "evaluated_qualification",
+        }
+        return mapping.get(v, val)
+
+    def _repair_payload_for_schema(obj: dict) -> dict:
+        # Generic repairs for known response shapes
+        if isinstance(obj, dict):
+            # 2.1 tagged_list
+            if isinstance(obj.get("tagged_list"), list):
+                for item in obj["tagged_list"]:
+                    if isinstance(item, dict):
+                        if "raw_string" not in item:
+                            if "raw" in item:
+                                item["raw_string"] = item.pop("raw")
+                            elif "text" in item:
+                                item["raw_string"] = item.pop("text")
+                        if "category" in item:
+                            item["category"] = _normalize_categories(item.get("category")) or item.get("category")
+
+            # 2.2 atomic_objects
+            if isinstance(obj.get("atomic_objects"), list):
+                for item in obj["atomic_objects"]:
+                    if isinstance(item, dict):
+                        if "requirement_string" not in item and "requirement" in item:
+                            item["requirement_string"] = item.pop("requirement")
+                        if "category" in item:
+                            item["category"] = _normalize_categories(item.get("category")) or item.get("category")
+
+            # 2.3 classified_objects
+            if isinstance(obj.get("classified_objects"), list):
+                for item in obj["classified_objects"]:
+                    if isinstance(item, dict):
+                        if "requirement_string" not in item and "requirement" in item:
+                            item["requirement_string"] = item.pop("requirement")
+                        if "classification" in item:
+                            item["classification"] = _normalize_classification(item.get("classification"))
+
+            # 3.1 assessed_objects
+            if isinstance(obj.get("assessed_objects"), list):
+                for item in obj["assessed_objects"]:
+                    if isinstance(item, dict):
+                        if "requirement_string" not in item and "requirement" in item:
+                            item["requirement_string"] = item.pop("requirement")
+                        if "match_reasoning" not in item and "reasoning" in item:
+                            item["match_reasoning"] = item.pop("reasoning")
+                        if "match" in item:
+                            mv = item["match"]
+                            if isinstance(mv, str):
+                                mvs = mv.strip().lower()
+                                if mvs in {"yes", "true"}:
+                                    item["match"] = True
+                                elif mvs in {"no", "false"}:
+                                    item["match"] = False
+        return obj
+
+    attempt = 0
+    while True:
         try:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            text = response.json()['choices'][0]['message']['content']
-            try:
-                response_schema.model_validate_json(text)
-                return response.json()
-            except ValueError as ve:
-                logger.exception(f"Response content: {text}")
-                raise ValueError(f"Response validation error: {ve}")
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=conn_t, read=read_t, write=write_t, pool=DEFAULT_HTTP_POOL_TIMEOUT)
+            ) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                # resp_json = response.json()
+                resp_json = json_repair.repair_json(response.text, return_objects=True)
+                text = resp_json['choices'][0]['message']['content'] # type: ignore
+                # First, strip potential code fences
+                candidate_text = _strip_code_fences(text)
+                try:
+                    response_schema.model_validate_json(candidate_text)
+                    # If we stripped fences, embed the cleaned text back; otherwise return original
+                    if candidate_text != text:
+                        resp_json['choices'][0]['message']['content'] = candidate_text # type: ignore
+                    return resp_json
+                except ValueError:
+                    # Attempt to repair common key/format issues and revalidate
+                    try:
+                        data_obj = json.loads(candidate_text)
+                        repaired = _repair_payload_for_schema(data_obj)
+                        repaired_text = json.dumps(repaired, ensure_ascii=False)
+                        response_schema.model_validate_json(repaired_text)
+                        resp_json['choices'][0]['message']['content'] = repaired_text # type: ignore
+                        return resp_json
+                    except Exception as ve2:
+                        logger.exception(f"Response content: {text}")
+                        raise ValueError(f"Response validation error: {ve2}")
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
+            if attempt >= retries:
+                logger.exception(
+                    f"HTTP timeout-related error after {attempt+1} attempt(s): {e}"
+                )
+                raise
+            # Exponential backoff with small jitter based on loop time fraction
+            jitter = 0.1 * (asyncio.get_running_loop().time() % 1)
+            backoff = DEFAULT_HTTP_BACKOFF_BASE * (2 ** attempt) + jitter
+            logger.warning(
+                f"Timeout-related error (attempt {attempt+1}/{retries+1}) for model {model}; "
+                f"retrying in {backoff:.2f}s... Error: {type(e).__name__}"
+            )
+            await asyncio.sleep(backoff)
+            attempt += 1
         except httpx.HTTPStatusError as e:
-            logger.exception(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            raise e
+            status = e.response.status_code
+            is_server_error = 500 <= status < 600
+            if is_server_error and attempt < retries:
+                jitter = 0.1 * (asyncio.get_running_loop().time() % 1)
+                backoff = DEFAULT_HTTP_BACKOFF_BASE * (2 ** attempt) + jitter
+                logger.warning(
+                    f"HTTP {status} from OpenRouter (attempt {attempt+1}/{retries+1}); retrying in {backoff:.2f}s..."
+                )
+                await asyncio.sleep(backoff)
+                attempt += 1
+                continue
+            logger.exception(f"HTTP error occurred: {status} - {e.response.text}")
+            raise
 
 async def generate(
         content: str, 
@@ -140,8 +336,21 @@ async def generate(
         max_thinking: Optional[int] = 2000,
         examples: Optional[List[dict]] = None
         ):
+    """High-level wrapper around `fetch_response` that records metadata in persistence layer.
+
+    Responsibilities:
+      * Invoke the LLM (structured) via `fetch_response`.
+      * Parse validated JSON content.
+      * Extract usage metrics (tokens, reasoning tokens if available).
+      * Record the run (audit trail) to the database via `upsert_llm_run_v2`.
+
+    Returns
+    -------
+    dict
+        {"data": <parsed json>, "tokens": {model, input_tokens, output_tokens, thinking_tokens, total_tokens}}
+    """
     llm_run_id = str(uuid.uuid4())
-    
+
     try:
         time_start = time.time()
         response = await fetch_response(
@@ -154,20 +363,20 @@ async def generate(
             examples=examples
         )
         time_end = time.time()
-        
+
         # Extract response data
-        message_content = response['choices'][0]['message']['content']
+        message_content = response['choices'][0]['message']['content']  # type: ignore
         parsed_data = json.loads(message_content)
-        
+
         # Extract token counts
-        usage = response['usage']
-        input_tokens = usage['prompt_tokens']
-        output_tokens = usage['completion_tokens']
-        reasoning_tokens = usage.get('completion_tokens_details', {}).get('reasoning_tokens', 0) or 0
-        total_tokens = usage['total_tokens']
-        
+        usage = response['usage']  # type: ignore
+        input_tokens = usage['prompt_tokens']  # type: ignore
+        output_tokens = usage['completion_tokens']  # type: ignore
+        reasoning_tokens = usage.get('completion_tokens_details', {}).get('reasoning_tokens', 0) or 0  # type: ignore
+        total_tokens = usage['total_tokens']  # type: ignore
+
         llm_run_output = str(parsed_data)
-        
+
         await upsert_llm_run_v2(
             llm_run_id=llm_run_id,
             job_id=job_id,
@@ -176,14 +385,14 @@ async def generate(
             llm_run_system_prompt_id=llm_run_system_prompt_id,
             llm_run_input=content,
             llm_run_output=llm_run_output,
-            llm_run_input_tokens=input_tokens,
-            llm_run_output_tokens=output_tokens,
+            llm_run_input_tokens=input_tokens,  # type: ignore
+            llm_run_output_tokens=output_tokens,  # type: ignore
             llm_run_thinking_tokens=reasoning_tokens,
-            llm_run_total_tokens=total_tokens,
+            llm_run_total_tokens=total_tokens,  # type: ignore
             llm_run_start=time_start,
             llm_run_end=time_end,
         )
-        
+
         return {
             "data": parsed_data,
             "tokens": {
@@ -213,13 +422,19 @@ async def process_single_job_assessment(
     Returns:
         bool: True if the job assessment was completed successfully, False if it failed.
     """
+    # Helper for consistent token usage aggregation (local, inner to avoid exporting globally)
+    def _accumulate_tokens(model_name: str, token_details_by_model: dict, result: dict):
+        details = token_details_by_model.setdefault(model_name, {'input': 0, 'output': 0, 'thinking': 0})
+        details['input'] += result['tokens']['input_tokens']
+        details['output'] += result['tokens']['output_tokens']
+        details['thinking'] += result['tokens']['thinking_tokens']
     async with semaphore:
         job_id = job['job_id']
         logger.info(f"Generating job assessment for job_id {job_id}")
-        
+
         has_errors = False
-        token_details_by_model = {}  # Track detailed token consumption by model
-        
+        token_details_by_model: dict = {}  # Track detailed token consumption by model
+
         # Step 2.1: Job description tagging
         content_2_1_template = Template(prompt_configuration_2_1['prompt_template'])
         content_2_1 = content_2_1_template.render(job_description=job['job_description'])
@@ -236,13 +451,7 @@ async def process_single_job_assessment(
                 llm_run_type=prompt_configuration_2_1['llm_run_type'],
                 examples=LLMExamples.example_2_1
             )
-            # Track token usage
-            model_name = result_2_1['tokens']['model']
-            if model_name not in token_details_by_model:
-                token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-            token_details_by_model[model_name]['input'] += result_2_1['tokens']['input_tokens']
-            token_details_by_model[model_name]['output'] += result_2_1['tokens']['output_tokens']
-            token_details_by_model[model_name]['thinking'] += result_2_1['tokens']['thinking_tokens']
+            _accumulate_tokens(result_2_1['tokens']['model'], token_details_by_model, result_2_1)
         except Exception as e:
             logger.exception(f"Error generating job description tagging for job {job['job_id']}: {e}")
             await upsert_job_quarantine(
@@ -255,7 +464,7 @@ async def process_single_job_assessment(
 
         # Step 2.2: Job description atomizing
         content_2_2_template = Template(prompt_configuration_2_2['prompt_template'])
-        content_2_2 = content_2_2_template.render(tagged_list=str(result_2_1['data']['tagged_list'])) # type: ignore
+        content_2_2 = content_2_2_template.render(tagged_list=str(result_2_1['data']['tagged_list']))  # type: ignore
         try:
             result_2_2 = await generate(
                 content=content_2_2,
@@ -269,13 +478,7 @@ async def process_single_job_assessment(
                 llm_run_type=prompt_configuration_2_2['llm_run_type'],
                 examples=LLMExamples.example_2_2
             )
-            # Track token usage
-            model_name = result_2_2['tokens']['model']
-            if model_name not in token_details_by_model:
-                token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-            token_details_by_model[model_name]['input'] += result_2_2['tokens']['input_tokens']
-            token_details_by_model[model_name]['output'] += result_2_2['tokens']['output_tokens']
-            token_details_by_model[model_name]['thinking'] += result_2_2['tokens']['thinking_tokens']
+            _accumulate_tokens(result_2_2['tokens']['model'], token_details_by_model, result_2_2)
         except Exception as e:
             logger.exception(f"Error generating job description atomizing for job {job['job_id']}: {e}")
             await upsert_job_quarantine(
@@ -302,15 +505,8 @@ async def process_single_job_assessment(
                 llm_run_type=prompt_configuration_2_3['llm_run_type'],
                 examples=LLMExamples.example_2_3
             )
-            # Track token usage
-            model_name = result_2_3['tokens']['model']
-            if model_name not in token_details_by_model:
-                token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-            token_details_by_model[model_name]['input'] += result_2_3['tokens']['input_tokens']
-            token_details_by_model[model_name]['output'] += result_2_3['tokens']['output_tokens']
-            token_details_by_model[model_name]['thinking'] += result_2_3['tokens']['thinking_tokens']
-            
-            # Extract final classifications from the response
+            _accumulate_tokens(result_2_3['tokens']['model'], token_details_by_model, result_2_3)
+
             final_classifications = []
             for classified_obj in result_2_3['data']['classified_objects']:  # type: ignore
                 final_classifications.append({
@@ -332,20 +528,19 @@ async def process_single_job_assessment(
 
         # Step 3.1: Assessment for all filtered items at once
         filtered_items = [item for item in final_classifications if item['classification'] != 'evaluated_qualification' and item['classification'] is not None and item['classification'] != '']
-        
-        if filtered_items:  # Only proceed if there are items to assess
+
+        if filtered_items:
             content_3_1_template = Template(prompt_configuration_3_1['prompt_template'])
             content_3_1 = content_3_1_template.render(
                 candidate_profile=resume_json['document_markdown'],
                 resume_text=resume['document_markdown'],
-                requirement_strings=filtered_items  # Pass the whole list
+                requirement_strings=filtered_items
             )
-            
-            # Retry logic for step 3.1 with validation
+
             max_retries = 2
             retry_count = 0
             result_3_1 = None
-            
+
             while retry_count <= max_retries:
                 try:
                     result_3_1 = await generate(
@@ -360,10 +555,9 @@ async def process_single_job_assessment(
                         llm_run_type=prompt_configuration_3_1['llm_run_type'],
                         examples=LLMExamples.example_3_1
                     )
-                    
-                    # Validate the result - check if we have assessments for all filtered items
+
                     assessed_objects = result_3_1['data']['assessed_objects']  # type: ignore
-                    if (not assessed_objects or 
+                    if (not assessed_objects or
                         len(assessed_objects) != len(filtered_items) or
                         any(obj['match_reasoning'] is None or obj['match'] is None for obj in assessed_objects)):
                         if retry_count < max_retries:
@@ -374,23 +568,16 @@ async def process_single_job_assessment(
                             logger.error(f"Failed validation after {max_retries} retries for job {job['job_id']}")
                             has_errors = True
                             break
-                    
-                    # Track token usage
-                    model_name = result_3_1['tokens']['model']
-                    if model_name not in token_details_by_model:
-                        token_details_by_model[model_name] = {'input': 0, 'output': 0, 'thinking': 0}
-                    token_details_by_model[model_name]['input'] += result_3_1['tokens']['input_tokens']
-                    token_details_by_model[model_name]['output'] += result_3_1['tokens']['output_tokens']
-                    token_details_by_model[model_name]['thinking'] += result_3_1['tokens']['thinking_tokens']
-                    
-                    # Map assessment results back to filtered_items
+
+                    _accumulate_tokens(result_3_1['tokens']['model'], token_details_by_model, result_3_1)
+
                     for i, assessed_obj in enumerate(assessed_objects):
                         if i < len(filtered_items):
                             filtered_items[i]['match_reasoning'] = assessed_obj['match_reasoning']
                             filtered_items[i]['match'] = assessed_obj['match']
-                    
-                    break  # Success, exit retry loop
-                    
+
+                    break
+
                 except Exception as e:
                     if retry_count < max_retries:
                         retry_count += 1
@@ -411,16 +598,16 @@ async def process_single_job_assessment(
             return False
 
         for item in final_classifications:
-            match_data = next((filtered_item for filtered_item in filtered_items 
-                             if filtered_item['requirement_string'] == item['requirement_string']), None)
-            
+            match_data = next((filtered_item for filtered_item in filtered_items
+                               if filtered_item['requirement_string'] == item['requirement_string']), None)
+
             if match_data:
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
-                    job_skills_atomic_string=item['requirement_string'],  
-                    job_skills_type=item['classification'],  
-                    job_skills_match=match_data['match'],  
+                    job_skills_atomic_string=item['requirement_string'],
+                    job_skills_type=item['classification'],
+                    job_skills_match=match_data['match'],
                     job_skills_match_reasoning=match_data['match_reasoning'],
                     job_skills_resume_id=resume['document_id'],
                 )
@@ -428,21 +615,20 @@ async def process_single_job_assessment(
                 await upsert_job_skills(
                     job_skill_id=str(uuid.uuid4()),
                     job_id=job['job_id'],
-                    job_skills_atomic_string=item['requirement_string'],  
-                    job_skills_type=item['classification'],  
-                    job_skills_match=None,  
+                    job_skills_atomic_string=item['requirement_string'],
+                    job_skills_type=item['classification'],
+                    job_skills_match=None,
                     job_skills_match_reasoning=None,
                     job_skills_resume_id=resume['document_id'],
                 )
-        
-        token_summary_parts = []
-        for model, details in token_details_by_model.items():
-            summary = f"{model}: input={details['input']}, output={details['output']}, thinking={details['thinking']}"
-            token_summary_parts.append(summary)
-        token_summary = "; ".join(token_summary_parts)
+
+        token_summary = "; ".join(
+            f"{model}: input={d['input']}, output={d['output']}, thinking={d['thinking']}"
+            for model, d in token_details_by_model.items()
+        )
         logger.info(f"Completed job assessment for job_id {job_id}")
         logger.info(f"Usage for job_id {job_id}: {token_summary}")
-        
+
         return True
 
 async def generate_job_assessment_with_id(job_id: str):
@@ -452,6 +638,7 @@ async def generate_job_assessment_with_id(job_id: str):
     - Otherwise, run the same pipeline used in generate_job_assessment for that single job,
       then return the resulting job_skills for the job_id.
     """
+    # NOTE: This function intentionally keeps a linear flow for clarity; early returns handle failure cases.
 
     try:
         existing = await get_job_skills_for_job(job_id)

@@ -60,10 +60,41 @@ async function processJob(task) {
 
     const apiResponse = await callApi(htmlContent, task.url);
 
-    task.status = 'completed';
+    // Store extracted data but keep status as processing until assessed
     task.data = apiResponse.data;
-    task.completedAt = new Date().toISOString();
     await browser.storage.local.set({ [task.id]: task });
+
+    // Poll for assessment completion
+    const start = Date.now();
+    const timeoutMs = 120000; // 2 minutes
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const r = await fetch(`http://127.0.0.1:8000/job/${encodeURIComponent(task.data.job_id)}`);
+        if (r.ok) {
+          const b = await r.json();
+          const snap = b?.data;
+          if (snap) {
+            task.data = { ...task.data, ...snap };
+            await browser.storage.local.set({ [task.id]: task });
+            if (snap.assessed === true) {
+              task.status = 'completed';
+              task.completedAt = new Date().toISOString();
+              await browser.storage.local.set({ [task.id]: task });
+              break;
+            }
+            if (snap.failed === true) {
+              // Stop polling if job went to quarantine
+              task.status = 'error';
+              task.error = 'Assessment failed';
+              await browser.storage.local.set({ [task.id]: task });
+              break;
+            }
+          }
+        }
+      } catch {}
+      await sleep(3000);
+    }
 
   } catch (error) {
     console.error(`Failed to process task ${task.id}:`, error);

@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 import os
 from typing import Optional
 
-from fastapi import FastAPI, Body, HTTPException, Query
+from fastapi import FastAPI, Body, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import httpx
@@ -21,24 +21,19 @@ from .db import (
     get_document_store,
     get_llm_models,
     get_recent_job_skills,
+    get_job_skills_for_job,
     get_prompts,
     get_recent_assessed_jobs,
-    get_document_master_resume
+    get_document_master_resume,
+    is_job_quarantined,
+    get_last_assessed_at,
+    get_latest_quarantine,
+    delete_job_quarantine,
+    cleanup_stale_quarantine,
 )
-
 from .crawler import manual_extract
 from .utilities import setup_logging, get_logger
-from .llm import (
-    generate_job_assessment_with_id
-)
-
-class LinkedInScrapeRequest(BaseModel):
-    keywords: list[str]
-    max_pages: int = 10
-
-class JobDetailsWithoutAssessmentRequest(BaseModel):
-    limit: int = 100
-    days_back: int = 14
+from .llm import generate_job_assessment_with_id
 
 class RegenerateJobAssessmentRequest(BaseModel):
     job_id: str
@@ -79,17 +74,20 @@ class UpdateJobAppliedRequest(BaseModel):
 
 setup_logging()
 logger = get_logger(__name__)
-
 load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan context manager to initialize the database.
-    """
+    """Application lifespan context manager to initialize the database."""
     logger.info("Starting application lifespan...")
     db_instance = await Database.get_instance()
-
+    # Phase 1: cleanup stale quarantine rows (jobs that now have assessments)
+    try:
+        removed = await cleanup_stale_quarantine()
+        if removed:
+            logger.info(f"Startup quarantine cleanup removed {removed} stale quarantine job(s)")
+    except Exception as e:
+        logger.error(f"Failed startup quarantine cleanup: {e}")
     yield
     logger.info("Closing database connection...")
     await db_instance.close()
@@ -99,7 +97,7 @@ app = FastAPI(
     title="Job Search API",
     description="API for managing job search data and operations.",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 @app.get("/")
@@ -181,7 +179,7 @@ async def upsert_prompt_endpoint(payload: PromptUpsertRequest):
         raise HTTPException(status_code=500, detail="Failed to upsert prompt.")
 
 @app.post("/html_extract")
-async def html_extract_endpoint(payload: HtmlPayload):
+async def html_extract_endpoint(payload: HtmlPayload, background_tasks: BackgroundTasks):
     """
     Extracts text from HTML content and returns it if it meets the minimum length requirement.
     """
@@ -205,41 +203,110 @@ async def html_extract_endpoint(payload: HtmlPayload):
                 job_applied=0,
                 job_applied_timestamp=None
             )
-            job_skills = await generate_job_assessment_with_id(extracted_data.get("job_id")) # type: ignore
-            
+            # Start assessment in the background and return quickly
+            background_tasks.add_task(generate_job_assessment_with_id, extracted_data.get("job_id"))  # type: ignore
+
             # Fetch the actual job record to get the real job_applied status
-            job_record = await get_job_detail_by_id(extracted_data.get("job_id")) # type: ignore
+            job_record = await get_job_detail_by_id(extracted_data.get("job_id"))  # type: ignore
             actual_job_applied = job_record.get("job_applied", 0) if job_record else 0
-            
-            extracted_data["required_qualifications"] = [
-                {
-                    "requirement":i['job_skills_atomic_string'],  # type: ignore
-                    "match":i['job_skills_match'],  # type: ignore
-                    "match_reason":i['job_skills_match_reasoning'] # type: ignore
-                } for i in job_skills if i.get("job_skills_type")=="required_qualification"] # type: ignore
-            extracted_data["additional_qualifications"] = [
-                {
-                    "requirement":i['job_skills_atomic_string'],  # type: ignore
-                    "match":i['job_skills_match'],  # type: ignore
-                    "match_reason":i['job_skills_match_reasoning'] # type: ignore
-                } for i in job_skills if i.get("job_skills_type")=="additional_qualification"] # type: ignore
-            extracted_data["evaluated_qualifications"] = [
-                {
-                    "requirement":i['job_skills_atomic_string']  # type: ignore
-                } for i in job_skills if i.get("job_skills_type")=="evaluated_qualification"] # type: ignore
-            # Include actual job_applied status from database
+
+            # Return basic data with placeholders; frontend can poll for completion
+            extracted_data["required_qualifications"] = []
+            extracted_data["additional_qualifications"] = []
+            extracted_data["evaluated_qualifications"] = []
             extracted_data["job_applied"] = actual_job_applied
-        return {"status": "success", "data": extracted_data}
+            extracted_data["assessed"] = False
+
+        return {"status": "success", "accepted": True, "data": extracted_data}
     except Exception as e:
         logger.exception(f"Debug HTML content: \n\n{html_content}\n\n")
         logger.exception("Failed to extract HTML content.")
         return {"status": "error", "message": "Failed to extract HTML content."}
+
+@app.get("/job/{job_id}", response_model=dict)
+async def get_job_endpoint(job_id: str):
+    """
+    Returns a unified job payload including qualifications and an assessed flag.
+    assessed = True if any job_skills exist for the job_id.
+    """
+    job = await get_job_detail_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"job_id not found: {job_id}")
+
+    skills = await get_job_skills_for_job(job_id)
+    assessed = len(skills) > 0
+    failed = await is_job_quarantined(job_id)
+    last_assessed_at = await get_last_assessed_at(job_id)
+    quarantine = await get_latest_quarantine(job_id) if failed else None
+
+    # Phase 1 quarantine cleanup (stale masking):
+    # A quarantine record is considered stale if the job now has a completed assessment (skills exist)
+    # but still has a quarantine entry. We mask the failed flag while surfacing that it was previously quarantined.
+    stale_quarantine = False
+    if failed and assessed and quarantine:
+        stale_quarantine = True
+        failed = False  # mask as recovered
+
+    def map_required(skills_list):
+        return [
+            {
+                "requirement": s.get("job_skills_atomic_string"),
+                "match": s.get("job_skills_match"),
+                "match_reason": s.get("job_skills_match_reasoning"),
+            }
+            for s in skills_list
+            if s.get("job_skills_type") == "required_qualification"
+        ]
+
+    def map_additional(skills_list):
+        return [
+            {
+                "requirement": s.get("job_skills_atomic_string"),
+                "match": s.get("job_skills_match"),
+                "match_reason": s.get("job_skills_match_reasoning"),
+            }
+            for s in skills_list
+            if s.get("job_skills_type") == "additional_qualification"
+        ]
+
+    def map_evaluated(skills_list):
+        return [
+            {"requirement": s.get("job_skills_atomic_string")}
+            for s in skills_list
+            if s.get("job_skills_type") == "evaluated_qualification"
+        ]
+
+    data = {
+        "job_id": job.get("job_id"),
+        "job_title": job.get("job_title"),
+        "job_company": job.get("job_company"),
+        "job_location": job.get("job_location"),
+        "job_salary": job.get("job_salary"),
+        "job_url": job.get("job_url"),
+        "job_url_direct": job.get("job_url_direct"),
+        "job_description": job.get("job_description"),
+        "job_applied": job.get("job_applied", 0),
+        "required_qualifications": map_required(skills),
+        "additional_qualifications": map_additional(skills),
+        "evaluated_qualifications": map_evaluated(skills),
+        "assessed": assessed,
+        "failed": failed,
+        "last_assessed_at": last_assessed_at,
+        "failed_reason": quarantine.get("job_quarantine_reason") if quarantine else None,
+        "failed_timestamp": quarantine.get("job_quarantine_timestamp") if quarantine else None,
+    # Expose raw quarantine_reason explicitly for UI clarity (duplicate of failed_reason for now)
+    "quarantine_reason": quarantine.get("job_quarantine_reason") if quarantine else None,
+    "quarantine_timestamp": quarantine.get("job_quarantine_timestamp") if quarantine else None,
+        "stale_quarantine": stale_quarantine,
+    }
+
+    return {"status": "success", "data": data}
     
 @app.post("/regenerate_job_assessment")
-async def regenerate_job_assessment_endpoint(payload: RegenerateJobAssessmentRequest = Body(...)):
+async def regenerate_job_assessment_endpoint(background_tasks: BackgroundTasks, payload: RegenerateJobAssessmentRequest = Body(...)):
     """
-    Deletes existing job_skills for the given job_id and regenerates the assessment.
-    Output matches /html_extract: { status, data: { ...job fields..., required_qualifications, additional_qualifications, evaluated_qualifications } }
+    Deletes existing job_skills for the given job_id and regenerates the assessment in the background.
+    Returns immediately with accepted=True. Clients can poll GET /job/{job_id} until assessed=True.
     """
     try:
         job_id = payload.job_id
@@ -247,37 +314,18 @@ async def regenerate_job_assessment_endpoint(payload: RegenerateJobAssessmentReq
         job = await get_job_detail_by_id(job_id)
         if not job:
             raise HTTPException(status_code=404, detail=f"job_id not found: {job_id}")
+        # Clear existing skills first so assessed becomes false immediately
         await delete_job_skills_by_job_id(job_id)
-        job_skills = await generate_job_assessment_with_id(job_id)
-        extracted_data = {
-            "job_id": job.get("job_id"),
-            "job_title": job.get("job_title"),
-            "job_company": job.get("job_company"),
-            "job_location": job.get("job_location"),
-            "job_salary": job.get("job_salary"),
-            "job_url": job.get("job_url"),
-            "job_url_direct": job.get("job_url_direct"),
-            "job_description": job.get("job_description"),
-            "job_applied": job.get("job_applied", 0),  # Include applied status
-        }
-        extracted_data["required_qualifications"] = [
-            {
-                "requirement": i['job_skills_atomic_string'],  # type: ignore
-                "match": i['job_skills_match'],  # type: ignore
-                "match_reason": i['job_skills_match_reasoning']  # type: ignore
-            } for i in (job_skills or []) if i.get("job_skills_type") == "required_qualification"]  # type: ignore
-        extracted_data["additional_qualifications"] = [
-            {
-                "requirement": i['job_skills_atomic_string'],  # type: ignore
-                "match": i['job_skills_match'],  # type: ignore
-                "match_reason": i['job_skills_match_reasoning']  # type: ignore
-            } for i in (job_skills or []) if i.get("job_skills_type") == "additional_qualification"]  # type: ignore
-        extracted_data["evaluated_qualifications"] = [
-            {
-                "requirement": i['job_skills_atomic_string']  # type: ignore
-            } for i in (job_skills or []) if i.get("job_skills_type") == "evaluated_qualification"]  # type: ignore
+        # Clear quarantine + skills then schedule regeneration
+        await delete_job_quarantine(job_id)
+        if background_tasks is not None:
+            background_tasks.add_task(generate_job_assessment_with_id, job_id)
+        else:
+            # Fallback: fire-and-forget
+            import asyncio
+            asyncio.create_task(generate_job_assessment_with_id(job_id))
 
-        return {"status": "success", "data": extracted_data}
+        return {"status": "success", "accepted": True, "job_id": job_id}
     except HTTPException:
         raise
     except Exception as e:
