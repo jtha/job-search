@@ -321,3 +321,62 @@ h4 {
   font-size: 12px;
   color: #666;
 }
+
+/* Status / pill tags */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: .2px;
+}
+.analyzing-tag { background:#f5f5f5; color:#666; }
+.regenerating-tag { background:#f5f5f5; color:#666; font-style: italic; }
+.failed-tag { background:#ffe5e5; color:#b30000; cursor: pointer; }
+
+/* Row state opacity */
+.job-row.job-analyzing, .job-row.job-regenerating { opacity: 0.6; }
+.job-row.job-failed { opacity: 0.8; }
+
+/* Failure popup */
+.failed-popup {
+  display: none;
+  position: absolute;
+  z-index: 9999;
+  max-width: 360px;
+  background: #fff;
+  border: 1px solid #e0b4b4;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 6px;
+  pointer-events: auto;
+  transition: opacity 0.12s ease;
+}
+.failed-popup strong { color:#b30000; }
+.failed-popup .retry-btn {
+  background: #b30000;
+  color: #fff;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.failed-popup .retry-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+/* Spinner for status pills */
+.status-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #bbb;
+  border-top-color: #666;
+  border-radius: 50%;
+  animation: status-spin 0.8s linear infinite;
+}
+@keyframes status-spin { to { transform: rotate(360deg); } }

@@ -341,14 +341,12 @@ function renderJobRow(job, skillsMap) {
     const reqClass = getFractionClass(fr.req.matched, fr.req.total);
     const addClass = getFractionClass(fr.add.matched, fr.add.total);
 
-    row.innerHTML = `
+    const isRegenerating = job.__regenerating === true; // internal transient flag (not from API)
+      row.innerHTML = `
     <div class="row-header">
       <div class="row-title">${displayTitle}</div>
       <div class="row-right">
-          <div class="row-fractions">
-            <span class="fraction fraction-req ${reqClass}" title="Required matched/total">Req: (${fr.req.matched}/${fr.req.total})</span>
-            <span class="fraction fraction-add ${addClass}" title="Additional matched/total">Add: (${fr.add.matched}/${fr.add.total})</span>
-        </div>
+            ${isRegenerating ? `<span class=\"status-pill regenerating-tag\" title=\"Regenerating assessment\"><span class=\"status-spinner\"></span>Regenerating…</span>` : `<div class=\"row-fractions\">\n            <span class=\"fraction fraction-req ${reqClass}\" title=\"Required matched/total\">Req: (${fr.req.matched}/${fr.req.total})</span>\n            <span class=\"fraction fraction-add ${addClass}\" title=\"Additional matched/total\">Add: (${fr.add.matched}/${fr.add.total})</span>\n        </div>`}
         <div class="row-location">${location}</div>
       </div>
     </div>
@@ -433,6 +431,22 @@ function renderJobRow(job, skillsMap) {
             regenBtn.disabled = true;
             regenBtn.textContent = 'Regenerating...';
             regenStatusEl.textContent = '';
+            // Set transient regenerating flag and re-render header portion
+            job.__regenerating = true;
+            // Re-render fractions region to show regenerating pill
+            const rowRight = row.querySelector('.row-right');
+              if (rowRight) {
+              const fractionsEl = rowRight.querySelector('.row-fractions');
+              if (fractionsEl) fractionsEl.remove();
+              const existingReg = rowRight.querySelector('.regenerating-tag');
+              if (!existingReg) {
+                const pill = document.createElement('span');
+                pill.className = 'status-pill regenerating-tag';
+                pill.innerHTML = '<span class="status-spinner"></span>Regenerating…';
+                rowRight.insertBefore(pill, rowRight.firstChild);
+              }
+            }
+            row.classList.add('job-regenerating');
             try {
               const resp = await regenerateAssessment(job.job_id);
               if (resp.status === 'success') {
@@ -493,10 +507,18 @@ function renderJobRow(job, skillsMap) {
                 }
 
               const newFr = computeFractions(updatedSkills);
-              const reqEl = row.querySelector('.fraction-req');
-              const addEl = row.querySelector('.fraction-add');
-              updateFractionEl(reqEl, 'Req', newFr.req.matched, newFr.req.total);
-              updateFractionEl(addEl, 'Add', newFr.add.matched, newFr.add.total);
+              job.__regenerating = false;
+              row.classList.remove('job-regenerating');
+              // Rebuild fractions container
+              const rowRight2 = row.querySelector('.row-right');
+              if (rowRight2) {
+                const regTag = rowRight2.querySelector('.regenerating-tag');
+                if (regTag) regTag.remove();
+                const fractionsDiv = document.createElement('div');
+                fractionsDiv.className = 'row-fractions';
+                fractionsDiv.innerHTML = `<span class=\"fraction fraction-req ${getFractionClass(newFr.req.matched, newFr.req.total)}\" title=\"Required matched/total\">Req: (${newFr.req.matched}/${newFr.req.total})</span><span class=\"fraction fraction-add ${getFractionClass(newFr.add.matched, newFr.add.total)}\" title=\"Additional matched/total\">Add: (${newFr.add.matched}/${newFr.add.total})</span>`;
+                rowRight2.insertBefore(fractionsDiv, rowRight2.firstChild);
+              }
               } else {
                 regenStatusEl.textContent = 'Error';
               }
@@ -507,6 +529,11 @@ function renderJobRow(job, skillsMap) {
               regenBtn.disabled = false;
               regenBtn.textContent = originalText;
               setTimeout(() => { regenStatusEl.textContent = ''; }, 4000);
+              if (job.__regenerating) {
+                // Safety: clear state if still set (e.g. on error path without success)
+                job.__regenerating = false;
+                row.classList.remove('job-regenerating');
+              }
             }
           });
         }

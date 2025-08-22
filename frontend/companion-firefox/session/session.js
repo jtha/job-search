@@ -48,6 +48,7 @@ const state = {
   decentOnly: false,
 };
 
+
 // Track which job rows are currently expanded so polling/rerenders don't collapse them
 const expandedRows = new Set();
 
@@ -85,6 +86,11 @@ function populateDetails(jobRow, task) {
       const originalText = regenBtn.textContent;
       regenBtn.textContent = 'Regenerating...';
       regenStatusEl.textContent = '';
+      // Mark task as regenerating (persist so re-render logic can pick it up)
+      task.data.regenerating_assessment = true;
+      const jobRow = regenBtn.closest('.job-row');
+      if (jobRow) jobRow.classList.add('job-regenerating');
+      await browser.storage.local.set({ [task.id]: task });
       try {
         const resp = await regenerateAssessment(task.data.job_id);
         if (resp.status === 'success') {
@@ -119,6 +125,9 @@ function populateDetails(jobRow, task) {
         regenBtn.disabled = false;
         regenBtn.textContent = originalText;
         setTimeout(() => { regenStatusEl.textContent = ''; }, 4000);
+        // Clear regenerating flag; rendering cycle will update UI accordingly
+        delete task.data.regenerating_assessment;
+        await browser.storage.local.set({ [task.id]: task });
       }
     });
   }
@@ -410,15 +419,19 @@ function renderJob(task) {
   const location = task.data?.job_location || '';
   const displayTitle = company ? `${title} at ${company}` : title;
 
-  const isAnalyzing = task?.data?.assessed === false && !isFailed; // don't show analyzing if failed
-  const showFractions = task?.data?.assessed === true && !isFailed; // hide fractions if failed
+  const isRegenerating = task?.data?.regenerating_assessment === true && !isFailed;
+  const isAnalyzing = !isRegenerating && task?.data?.assessed === false && !isFailed; // don't show analyzing if failed or regenerating
+  const showFractions = task?.data?.assessed === true && !isFailed && !isRegenerating; // hide fractions if failed or regenerating
   const analyzingTagHtml = isAnalyzing
-    ? '<span class="analyzing-tag" title="Assessment in progress" style="margin-right:8px; padding:2px 6px; border-radius:10px; background:#f5f5f5; color:#666; font-size:12px;">Analyzing…</span>'
+    ? '<span class="status-pill analyzing-tag" title="Assessment in progress"><span class="status-spinner"></span>Analyzing…</span>'
     : '';
-    const failedReason = task?.data?.quarantine_reason || task?.data?.failed_reason || 'Assessment failed';
-    const failedTagHtml = isFailed
-      ? `<span class="failed-tag" data-failed-reason="${encodeURIComponent(failedReason)}" style="margin-right:8px; padding:2px 6px; border-radius:10px; background:#ffe5e5; color:#b30000; font-size:12px; cursor:pointer;">Failed</span>`
-      : '';
+  const regeneratingTagHtml = isRegenerating
+    ? '<span class="status-pill regenerating-tag" title="Regenerating assessment"><span class="status-spinner"></span>Regenerating…</span>'
+    : '';
+  const failedReason = task?.data?.quarantine_reason || task?.data?.failed_reason || 'Assessment failed';
+  const failedTagHtml = isFailed
+    ? `<span class="status-pill failed-tag" data-failed-reason="${encodeURIComponent(failedReason)}">Failed</span>`
+    : '';
 
   const fr = computeFractionsFromTaskData(task.data || {});
   const reqClass = getFractionClass(fr.req.matched, fr.req.total);
@@ -438,7 +451,7 @@ function renderJob(task) {
       <div class="row-title">${displayTitle}</div>
       <div class="row-right">
         ${fractionsHtml}
-        ${analyzingTagHtml}
+        ${regeneratingTagHtml || analyzingTagHtml}
         ${failedTagHtml}
         <span class="status-dot status-${task.status}" title="${task.status}"></span>
         <div class="row-location">${location || 'N/A'}</div>
@@ -458,23 +471,8 @@ function renderJob(task) {
   const popup = document.createElement('div');
   popup.id = popupId;
   popup.className = 'failed-popup';
-  popup.style.display = 'none';
-  popup.style.position = 'absolute';
-  popup.style.zIndex = '9999';
-  popup.style.maxWidth = '360px';
-  popup.style.background = '#fff';
-  popup.style.border = '1px solid #e0b4b4';
-  popup.style.boxShadow = '0 4px 14px rgba(0,0,0,0.2)';
-  popup.style.padding = '12px 14px';
-  popup.style.fontSize = '12px';
-  popup.style.lineHeight = '1.4';
-  popup.style.borderRadius = '6px';
-  popup.style.pointerEvents = 'auto';
-  popup.style.transition = 'opacity 0.12s ease';
       const reasonDecoded = decodeURIComponent(failedEl.getAttribute('data-failed-reason'));
-  const headingColor = isFailed ? '#b30000' : '#036';
-  const headingText = isFailed ? 'Failure Reason' : 'Previous Failure';
-  popup.innerHTML = `<strong style="color:#b30000;">Failure Reason</strong><br>${reasonDecoded}<div style="margin-top:8px; text-align:right;"><button class="retry-btn" style="background:#b30000; color:#fff; padding:4px 8px; border:none; border-radius:4px; cursor:pointer;">Retry</button></div>`;
+  popup.innerHTML = `<strong>Failure Reason</strong><br>${reasonDecoded}<div style="margin-top:8px; text-align:right;"><button class="retry-btn">Retry</button></div>`;
       document.body.appendChild(popup);
 
       function positionPopup() {
@@ -547,11 +545,9 @@ function renderJob(task) {
     }
   }
 
-  if (isAnalyzing) {
-    jobRow.style.opacity = '0.6';
-  } else if (isFailed) {
-    jobRow.style.opacity = '0.8';
-  }
+  if (isAnalyzing) jobRow.classList.add('job-analyzing');
+  if (isRegenerating) jobRow.classList.add('job-regenerating');
+  if (isFailed) jobRow.classList.add('job-failed');
 
   const header = jobRow.querySelector('.row-header');
   const detailsContainer = jobRow.querySelector('.details-container');
