@@ -1,20 +1,19 @@
-// --- ADD THIS LISTENER BACK ---
 // Listen for clicks on the browser action (the toolbar button)
-// and toggle the sidebar's visibility. This is the persistent listener.
 browser.action.onClicked.addListener(() => {
   browser.sidebarAction.toggle();
 });
 
-
-// --- ALL THE EXISTING WORKER LOGIC REMAINS THE SAME ---
 
 // This function contains the scraping logic.
 function scrapeTargetElement(selectors) {
   for (const selector of selectors) {
     const targetElement = document.querySelector(selector);
     if (targetElement) {
+      // Lightweight diagnostics to page console
+      console.debug('[companion] matched selector:', selector, 'textLength:', (targetElement.textContent || '').length);
       return targetElement.outerHTML;
     }
+    console.debug('[companion] not found:', selector);
   }
   return null;
 }
@@ -41,22 +40,31 @@ async function processJob(task) {
     await browser.storage.local.set({ [task.id]: task });
 
     const targetSelectors = [
-      'div.jobs-search__job-details--wrapper',
-      'div.jobs-semantic-search-job-details-wrapper',
-      'div.job-view-layout'
+      '.job-view-layout',
+      '.jobs-semantic-search-job-details-wrapper',
+      '.jobs-search__job-details--container',
+      '.jobs-search__job-details--wrapper'
     ];
     // Find the tab by its URL, since the user might have navigated away.
     const [targetTab] = await browser.tabs.query({ url: task.url });
     if (!targetTab) throw new Error("Original tab not found. It may have been closed.");
 
     const results = await browser.scripting.executeScript({
-      target: { tabId: targetTab.id },
+      target: { tabId: targetTab.id, allFrames: true }, // <-- Key change here
       func: scrapeTargetElement,
       args: [targetSelectors]
     });
 
-    const htmlContent = results[0].result;
-    if (!htmlContent) throw new Error("Could not find target element on page.");
+    // const htmlContent = results[0].result;
+    // if (!htmlContent) throw new Error("Could not find target element on page.");
+
+    const successfulResult = results.find(frameResult => frameResult.result !== null);
+
+    if (!successfulResult) {
+      throw new Error("Could not find target element in any frame on the page.");
+    }
+
+    const htmlContent = successfulResult.result;
 
     const apiResponse = await callApi(htmlContent, task.url);
 
